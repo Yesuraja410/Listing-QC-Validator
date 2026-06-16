@@ -18,20 +18,35 @@ def generate_qc_excel_report(val_df: pd.DataFrame, exc_df: pd.DataFrame, qc_stag
     # Pre-process tables for export (drop internal underscore columns from display sheets, except tracking)
     # On Sheet 3 (Validated Data), we want to make it look clean: rename tracking columns to user-friendly names
     clean_val_df = val_df.copy()
-    col_mapping = {
-        "_original_row_number": "Excel Row",
-        "_source_file": "Source File",
-        "_qc_status": "QC Status",
-        "_qc_errors": "Total Errors",
-        "_qc_warnings": "Total Warnings",
-        "_qc_details": "Validation Logs"
-    }
-    clean_val_df = clean_val_df.rename(columns=col_mapping)
     
-    # Reorder columns slightly so tracking info is near the front
-    tracking_cols = ["Source File", "Excel Row", "QC Status", "Total Errors", "Total Warnings", "Validation Logs"]
-    other_cols = [c for c in clean_val_df.columns if c not in tracking_cols and not c.startswith("_")]
-    clean_val_df = clean_val_df[tracking_cols + other_cols]
+    # Ensure all target columns exist in clean_val_df
+    target_headers = {
+        "sku": "Seller SKU",
+        "article_number": "Article No",
+        "Zeocm Status": "Zeocm Status",
+        "launch_date": "Launch Date",
+        "gender": "Gender",
+        "product_name": "Product Name",
+        "Gender Check": "Gender Check",
+        "color_name": "Color Name",
+        "Color Check": "Color Check",
+        "size": "Size",
+        "Size Check": "Size Check",
+        "price": "RRP",
+        "RRP Check": "RRP Check",
+        "quantity": "Quantity"
+    }
+    
+    for col in target_headers.keys():
+        if col not in clean_val_df.columns:
+            clean_val_df[col] = ""
+            
+    # Keep only the target columns in the exact order
+    ordered_cols = list(target_headers.keys())
+    clean_val_df = clean_val_df[ordered_cols]
+    
+    # Rename columns to the requested headers
+    clean_val_df = clean_val_df.rename(columns=target_headers)
 
     # Calculate metrics for the dashboard
     total_records = len(val_df)
@@ -225,7 +240,7 @@ def generate_qc_excel_report(val_df: pd.DataFrame, exc_df: pd.DataFrame, qc_stag
         # Populate and style validated data
         for r in range(len(clean_val_df)):
             row_idx = 4 + r
-            status = clean_val_df.iloc[r, 2] # QC Status column ('Passed', 'Warning', 'Failed')
+            status = val_df.iloc[r]["_qc_status"] # QC Status from original val_df
             
             if status == "Passed":
                 row_format = green_fill
