@@ -298,16 +298,39 @@ def validate_row_internal(
         if not re.fullmatch(r'\d{13}', sku_val):
             add_exc("SKU", sku_val, "Warning", "SKU must be exactly 13 digits barcode.")
 
-    # 3. E-commerce Status Basic Check
-    if is_empty(row.get("ecommerce_status")):
-        add_exc("E-commerce Status", row.get("ecommerce_status"), "Error", "E-commerce Status is missing.")
+    # 3. E-commerce Status zEcom Check
+    ref_ecom_status = "Not Found"
+    if article_to_ecomstatus is not None and norm_art:
+        ref_ecom_status = article_to_ecomstatus.get(norm_art, "Not Found")
+    
+    if ref_ecom_status == "Not Found":
+        add_exc("Article Number", art_num, "Error", f"Article No '{art_num}' not found in zEcom File lookup.")
+    elif ref_ecom_status not in ["Active", "Yes", "Y", "Active (No Future launch)"]:
+        add_exc("E-commerce Status", ref_ecom_status, "Error", f"Listing blocked: zEcom File status for this channel is '{ref_ecom_status}' (Should be Yes/Active).")
 
-    # 4. Launch Date Basic Check
+    # If status is mapped in sheet, compare it
+    if pd.notna(row.get("ecommerce_status")) and not is_empty(row.get("ecommerce_status")):
+        norm_up_status = _normalise_status(ecom_status)
+        if ref_ecom_status != "Not Found" and norm_up_status != ref_ecom_status:
+            add_exc("E-commerce Status", ecom_status, "Error", f"Status mismatch: Uploaded status is '{ecom_status}' but zEcom File defines it as '{ref_ecom_status}' for Article No '{art_num}'.")
+
+    # 4. Launch Date zEcom Check
+    ref_ld_str = ""
+    ref_ld = None
+    if article_to_launchdate is not None and norm_art:
+        ref_ld_str = article_to_launchdate.get(norm_art, "")
+        if ref_ld_str:
+            try:
+                ref_ld = pd.to_datetime(ref_ld_str).date()
+                if ref_ld > datetime.date.today():
+                    add_exc("Launch Date", ref_ld_str, "Error", f"Future Launch Date: zEcom File defines launch date as '{ref_ld_str}' (future). Product cannot be listed yet.")
+            except Exception:
+                pass
+
+    # If launch date is mapped in sheet, check it
     parsed_date = None
-    launch_date_raw = row.get("launch_date")
-    if is_empty(launch_date_raw):
-        add_exc("Launch Date", launch_date_raw, "Error", "Launch Date is missing.")
-    else:
+    if pd.notna(row.get("launch_date")) and not is_empty(row.get("launch_date")):
+        launch_date_raw = row.get("launch_date")
         if isinstance(launch_date_raw, (datetime.datetime, datetime.date)):
             parsed_date = launch_date_raw
         else:
@@ -324,18 +347,29 @@ def validate_row_internal(
                     pass
         if parsed_date is None:
             add_exc("Launch Date", launch_date_raw, "Error", "Launch Date has an invalid format. Recommended: YYYY-MM-DD.")
+        else:
+            if isinstance(parsed_date, datetime.datetime):
+                parsed_date = parsed_date.date()
+            if parsed_date > datetime.date.today():
+                add_exc("Launch Date", launch_date_raw, "Error", f"Future Launch Date: Uploaded launch date '{launch_date_raw}' is in the future.")
+            if ref_ld and parsed_date != ref_ld:
+                add_exc("Launch Date", launch_date_raw, "Warning", f"Launch Date mismatch: Uploaded '{launch_date_raw}' does not match zEcom File Launch Date '{ref_ld_str}'.")
 
-    # 5. Gender Basic Check
-    if is_empty(row.get("gender")):
-        add_exc("Gender", row.get("gender"), "Error", "Gender is missing.")
-    elif gender.lower() not in [g.lower() for g in allowed_genders]:
-        add_exc("Gender", gender, "Error", f"Gender '{gender}' is invalid. Allowed: {', '.join(allowed_genders)}.")
+    # 5. Gender Check
+    ref_gender = ""
+    if sku_to_gender is not None and sku_val:
+        ref_gender = sku_to_gender.get(sku_val, "")
+        
+    if pd.notna(row.get("gender")) and not is_empty(row.get("gender")):
+        if gender.lower() not in [g.lower() for g in allowed_genders]:
+            add_exc("Gender", gender, "Error", f"Gender '{gender}' is invalid. Allowed: {', '.join(allowed_genders)}.")
+        elif ref_gender and gender.strip().lower() != ref_gender.strip().lower():
+            add_exc("Gender", gender, "Warning", f"Gender mismatch: Uploaded gender '{gender}' does not match Content File gender '{ref_gender}' for SKU '{sku_val}'.")
 
-    # 6. Product Name vs Gender Keyword Check
-    if is_empty(row.get("product_name")):
-        add_exc("Product Name", row.get("product_name"), "Error", "Product Name is missing.")
-    elif not is_empty(row.get("gender")) and gender.lower() in [g.lower() for g in allowed_genders]:
-        gender_low = gender.lower()
+    # Product Name vs Gender Keyword Check using ref_gender (or uploaded gender as fallback)
+    gender_for_name_check = ref_gender if ref_gender else gender
+    if gender_for_name_check and not is_empty(prod_name):
+        gender_low = gender_for_name_check.lower()
         prod_name_low = prod_name.lower()
         
         male_mismatch_keywords = [
@@ -346,15 +380,15 @@ def validate_row_internal(
             r"\bmen\b", r"\bmens\b", r"\bboy\b", r"\bboys\b", r"\bhim\b", r"\bhis\b", r"\bmale\b"
         ]
         
-        if gender_low in ["men", "boys"]:
+        if gender_low in ["men", "boys", "male"]:
             for pattern in male_mismatch_keywords:
                 if re.search(pattern, prod_name_low):
-                    add_exc("Product Name", prod_name, "Error", f"Gender mismatch: Name contains female keyword '{re.sub(r'[^a-zA-Z]', '', pattern)}' but Gender is '{gender}'.")
+                    add_exc("Product Name", prod_name, "Error", f"Gender mismatch: Name contains female keyword '{re.sub(r'[^a-zA-Z]', '', pattern)}' but Gender is '{gender_for_name_check}'.")
                     break
-        elif gender_low in ["women", "girls"]:
+        elif gender_low in ["women", "girls", "female"]:
             for pattern in female_mismatch_keywords:
                 if re.search(pattern, prod_name_low):
-                    add_exc("Product Name", prod_name, "Error", f"Gender mismatch: Name contains male keyword '{re.sub(r'[^a-zA-Z]', '', pattern)}' but Gender is '{gender}'.")
+                    add_exc("Product Name", prod_name, "Error", f"Gender mismatch: Name contains male keyword '{re.sub(r'[^a-zA-Z]', '', pattern)}' but Gender is '{gender_for_name_check}'.")
                     break
 
     # 7. Color Name Basic Check
@@ -386,20 +420,27 @@ def validate_row_internal(
             price = float(price_raw)
             if price <= 0:
                 add_exc("Price", price_raw, "Error", "Price must be greater than zero.")
+            
+            # Compare against zEcom RRP Price
+            ref_rrp = article_to_rrpprice.get(norm_art, "") if norm_art else ""
+            if ref_rrp:
+                try:
+                    ref_p_f = float(re.sub(r'[^\d\.]', '', str(ref_rrp)))
+                    if not np.isclose(price, ref_p_f):
+                        add_exc("Price", price_raw, "Error", f"Price mismatch: Uploaded price '{price_raw}' does not match RRP Price '{ref_rrp}' from zEcom File for Article No '{art_num}'.")
+                except Exception:
+                    pass
         except (ValueError, TypeError):
             add_exc("Price", price_raw, "Error", "Price is not a valid number.")
 
     # ── TikTok MY Malay Language Validation ──
     if "TikTok" in channel:
         title_desc_combined = prod_name.lower()
-        # Malay lang check: check if any of the common malay keywords are in title/name
         has_malay = any(re.search(pat, title_desc_combined) for pat in MALAY_KEYWORDS)
         if not has_malay:
             add_exc("Product Name", prod_name, "Warning", "TikTok Listing: Title/Description should contain Malay language words (e.g. untuk, lelaki, wanita, kasut, saiz).")
 
-    # ── Reference File Cross-Validation Logic ─────────────────────────────────
-
-    # A. Content File checks
+    # ── Reference File Cross-Validation Logic ──
     if sku_to_article is not None:
         if sku_val:
             if sku_val in sku_to_article:
@@ -413,9 +454,9 @@ def validate_row_internal(
                     
                 # Check Gender in Product Name
                 if sku_to_gender and sku_val in sku_to_gender:
-                    ref_gender = sku_to_gender[sku_val]
-                    if ref_gender:
-                        gender_low = ref_gender.lower().strip()
+                    ref_gender_local = sku_to_gender[sku_val]
+                    if ref_gender_local:
+                        gender_low = ref_gender_local.lower().strip()
                         gender_syns = {
                             "men": ["men", "mens", "male", "gentleman", "gentlemen"],
                             "women": ["women", "womens", "female", "lady", "ladies", "woman"],
@@ -427,9 +468,9 @@ def validate_row_internal(
                         syns = gender_syns.get(gender_low, [gender_low])
                         prod_name_low = prod_name.lower()
                         if not any(re.search(r'\b' + re.escape(syn) + r'\b', prod_name_low) for syn in syns) and not any(syn in prod_name_low for syn in syns):
-                            add_exc("Product Name", prod_name, "Warning", f"Product Name mismatch: Product Name does not contain reference to gender '{ref_gender}' or its synonyms.")
+                            add_exc("Product Name", prod_name, "Warning", f"Product Name mismatch: Product Name does not contain reference to gender '{ref_gender_local}' or its synonyms.")
 
-                # Check Color Name matching (Shopee 20-character limit check)
+                # Check Color Name matching
                 if sku_to_colorname and sku_val in sku_to_colorname:
                     ref_color = sku_to_colorname[sku_val]
                     if ref_color:
@@ -443,23 +484,29 @@ def validate_row_internal(
                             if color_name.strip().lower() != ref_color.strip().lower():
                                 add_exc("Color Name", color_name, "Error", f"Color Name mismatch: Uploaded Color Name '{color_name}' does not match Content File Color Name '{ref_color}'.")
 
-                # Size Checkup dynamic logic: US size / Rus size / UK size
+                # Size Checkup dynamic logic
                 if size:
-                    # Choose size reference based on Channel & Footwear / Apparel classification
+                    ref_size = ""
+                    size_type = "UK size"
+                    valid_sizes_for_art = set()
+                    
                     if channel == "Lazada PH" and is_footwear(prod_name):
-                        # US Size
                         ref_size = sku_to_ussize.get(sku_val, "")
                         size_type = "US size"
                         valid_sizes_for_art = article_to_ussizes.get(norm_art, set())
-                    elif channel in ["Zalora SG", "Zalora MY", "Zalora PH"] and is_kids_apparel(gender, prod_name):
-                        # Rus Size
+                    elif channel in ["Zalora SG", "Zalora MY", "Zalora PH"] and is_kids_apparel(gender_for_name_check, prod_name):
                         ref_size = sku_to_russize.get(sku_val, "")
                         size_type = "Rus size"
                         valid_sizes_for_art = article_to_russizes.get(norm_art, set())
                     else:
-                        # UK Size (Default)
                         ref_size = sku_to_uksize.get(sku_val, "")
                         size_type = "UK size"
+                        valid_sizes_for_art = article_to_uksizes.get(norm_art, set())
+                        
+                    # Fallback to UK size if preferred type is not mapped/empty
+                    if not ref_size and (channel == "Lazada PH" or is_kids_apparel(gender_for_name_check, prod_name)):
+                        ref_size = sku_to_uksize.get(sku_val, "")
+                        size_type = "UK size (Fallback)"
                         valid_sizes_for_art = article_to_uksizes.get(norm_art, set())
                         
                     if ref_size:
@@ -467,96 +514,49 @@ def validate_row_internal(
                             add_exc("Size", raw_size, "Error", f"Size mismatch: Size '{raw_size}' (Normalized: '{size}') does not match reference {size_type} '{ref_size}' in Content File for SKU '{sku_val}'.")
                     else:
                         add_exc("Size", raw_size, "Warning", f"No {size_type} mapped in Content File for SKU '{sku_val}'.")
-                
-                # Gender Check from Content File
-                if gender and sku_to_gender and sku_val in sku_to_gender:
-                    ref_gender = sku_to_gender[sku_val]
-                    if ref_gender and gender.strip().lower() != ref_gender.strip().lower():
-                        add_exc("Gender", gender, "Warning", f"Gender mismatch: Uploaded gender '{gender}' does not match Content File gender '{ref_gender}' for SKU '{sku_val}'.")
             else:
                 add_exc("SKU", sku_val, "Warning", f"SKU '{sku_val}' not found in Content File lookup.")
                 # Fallback size checking using Article No
                 if norm_art and size:
+                    valid_sizes = set()
+                    size_type = "UK size"
                     if channel == "Lazada PH" and is_footwear(prod_name):
                         valid_sizes = article_to_ussizes.get(norm_art, set())
                         size_type = "US size"
-                    elif channel in ["Zalora SG", "Zalora MY", "Zalora PH"] and is_kids_apparel(gender, prod_name):
+                    elif channel in ["Zalora SG", "Zalora MY", "Zalora PH"] and is_kids_apparel(gender_for_name_check, prod_name):
                         valid_sizes = article_to_russizes.get(norm_art, set())
                         size_type = "Rus size"
                     else:
                         valid_sizes = article_to_uksizes.get(norm_art, set())
                         size_type = "UK size"
                         
+                    if not valid_sizes:
+                        valid_sizes = article_to_uksizes.get(norm_art, set())
+                        size_type = "UK size (Fallback)"
+                        
                     if valid_sizes and size.strip().lower() not in valid_sizes:
                         add_exc("Size", raw_size, "Error", f"Size mismatch: Size '{raw_size}' (Normalized: '{size}') is not in the list of valid {size_type}s ({', '.join(sorted(list(valid_sizes)))}) in Content File for Article No '{art_num}'.")
         else:
             # Check size by Article No alone if SKU is missing
             if norm_art and size:
+                valid_sizes = set()
+                size_type = "UK size"
                 if channel == "Lazada PH" and is_footwear(prod_name):
                     valid_sizes = article_to_ussizes.get(norm_art, set())
                     size_type = "US size"
-                elif channel in ["Zalora SG", "Zalora MY", "Zalora PH"] and is_kids_apparel(gender, prod_name):
+                elif channel in ["Zalora SG", "Zalora MY", "Zalora PH"] and is_kids_apparel(gender_for_name_check, prod_name):
                     valid_sizes = article_to_russizes.get(norm_art, set())
                     size_type = "Rus size"
                 else:
                     valid_sizes = article_to_uksizes.get(norm_art, set())
                     size_type = "UK size"
                     
+                if not valid_sizes:
+                    valid_sizes = article_to_uksizes.get(norm_art, set())
+                    size_type = "UK size (Fallback)"
+                    
                 if valid_sizes and size.strip().lower() not in valid_sizes:
                     add_exc("Size", raw_size, "Error", f"Size mismatch: Size '{raw_size}' (Normalized: '{size}') is not in the list of valid {size_type}s ({', '.join(sorted(list(valid_sizes)))}) in Content File for Article No '{art_num}'.")
-
-    # B. zEcom File checks (including RRP price validations)
-    if article_to_ecomstatus is not None:
-        if norm_art:
-            if norm_art in article_to_ecomstatus:
-                ref_ecom_status = article_to_ecomstatus[norm_art]
-                norm_up_status = _normalise_status(ecom_status)
-                
-                # Check that Ecom Status in zEcom is Yes/Active
-                if ref_ecom_status != "Active":
-                    add_exc("E-commerce Status", ecom_status, "Error", f"Listing blocked: zEcom File status for this channel is '{ref_ecom_status}' (Should be Active/Yes).")
-                
-                if norm_up_status != ref_ecom_status:
-                    add_exc("E-commerce Status", ecom_status, "Error", f"Status mismatch: Uploaded status is '{ecom_status}' but zEcom File defines it as '{ref_ecom_status}' for Article No '{art_num}'.")
-                
-                # Launch Date checks
-                ref_ld = None
-                if norm_art in article_to_launchdate:
-                    ref_ld_str = article_to_launchdate[norm_art]
-                    if ref_ld_str:
-                        try:
-                            ref_ld = pd.to_datetime(ref_ld_str).date()
-                            # Error if zEcom launch date is in the future
-                            if ref_ld > datetime.date.today():
-                                add_exc("Launch Date", ref_ld_str, "Error", f"Future Launch Date: zEcom File defines launch date as '{ref_ld_str}' (future). Product cannot be listed yet.")
-                        except Exception:
-                            pass
-                            
-                if parsed_date:
-                    if isinstance(parsed_date, datetime.datetime):
-                        parsed_date = parsed_date.date()
-                    # Error if uploaded launch date is in the future
-                    if parsed_date > datetime.date.today():
-                        add_exc("Launch Date", launch_date_raw, "Error", f"Future Launch Date: Uploaded launch date '{launch_date_raw}' is in the future.")
-                        
-                    # Match check with zEcom launch date
-                    if ref_ld and parsed_date != ref_ld:
-                        add_exc("Launch Date", launch_date_raw, "Warning", f"Launch Date mismatch: Uploaded '{launch_date_raw}' does not match zEcom File Launch Date '{ref_ld_str}'.")
-                            
-                # zEcom RRP Price validation
-                if price_raw and norm_art in article_to_rrpprice:
-                    rrp_raw = article_to_rrpprice[norm_art]
-                    if rrp_raw:
-                        try:
-                            uploaded_p = float(price_raw)
-                            # Strip any currency characters in reference price
-                            ref_p_f = float(re.sub(r'[^\d\.]', '', str(rrp_raw)))
-                            if not np.isclose(uploaded_p, ref_p_f):
-                                add_exc("Price", price_raw, "Error", f"Price mismatch: Uploaded price '{price_raw}' does not match RRP Price '{rrp_raw}' from zEcom File for Article No '{art_num}'.")
-                        except Exception:
-                            pass
-            else:
-                add_exc("Article Number", art_num, "Error", f"Article No '{art_num}' not found in zEcom File lookup.")
 
     return exceptions
 
@@ -706,6 +706,26 @@ def validate_dataframe(
             row = row.copy()
             row["article_number"] = resolved_art
             art_num = resolved_art
+
+        norm_art = _normalise_article_no(art_num)
+
+        # If launch_date is empty/missing, populate it from zEcom reference
+        if is_empty(row.get("launch_date")) and zecom_maps:
+            article_to_launchdate, _, _ = zecom_maps
+            ref_ld_str = article_to_launchdate.get(norm_art, "") if norm_art else ""
+            if ref_ld_str:
+                df.loc[idx, "launch_date"] = ref_ld_str
+                row = row.copy()
+                row["launch_date"] = ref_ld_str
+
+        # If gender is empty/missing, populate it from Content reference
+        if is_empty(row.get("gender")) and content_maps:
+            _, _, _, _, sku_to_gender, _, _, _, _ = content_maps
+            ref_gender = sku_to_gender.get(sku_val, "") if sku_val else ""
+            if ref_gender:
+                df.loc[idx, "gender"] = ref_gender
+                row = row.copy()
+                row["gender"] = ref_gender
 
         if qc_stage == "Internal QC":
             row_exceptions = validate_row_internal(row, idx, channel, content_maps, zecom_maps, allowed_genders, allowed_statuses)
