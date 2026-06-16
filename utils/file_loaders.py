@@ -113,11 +113,11 @@ def _normalise_article_no(val):
 
 def _ecom_status_from_val(val, future_launch):
     if bool(future_launch):
-        return "Inactive (No Future launch)"
+        return "No"
     s = _safe_str(val).upper()
     if s in ("YES", "Y"):
-        return "Active"
-    return "Inactive"
+        return "Yes"
+    return "No"
 
 def parse_google_sheets_url(url: str) -> str:
     if "docs.google.com/spreadsheets" not in url:
