@@ -75,6 +75,10 @@ CANONICAL_LABELS = {
 def _safe_str(val):
     if val is None:
         return ""
+    if isinstance(val, (pd.Series, np.ndarray)):
+        if len(val) == 0:
+            return ""
+        val = val.iloc[0] if hasattr(val, "iloc") else val[0]
     try:
         if pd.isna(val):
             return ""
@@ -833,22 +837,17 @@ def auto_map_columns(columns: list) -> dict:
     return mapping
 
 def standardize_dataframe(df: pd.DataFrame, mapping: dict, source_name: str = "Uploaded File") -> pd.DataFrame:
-    standard_df = df.copy()
-    standard_df["_original_row_number"] = standard_df.index + 2
-    standard_df["_source_file"] = source_name
-    
-    rename_dict = {}
-    cols_to_keep = ["_original_row_number", "_source_file"]
+    standard_df = pd.DataFrame()
+    standard_df["_original_row_number"] = df.index + 2
+    standard_df["_source_file"] = [source_name] * len(df)
     
     for canonical, file_col in mapping.items():
-        if file_col and file_col in standard_df.columns:
-            rename_dict[file_col] = canonical
-            if canonical not in standard_df.columns:
-                standard_df[canonical] = standard_df[file_col]
-            cols_to_keep.append(canonical)
+        if file_col and file_col in df.columns:
+            col_data = df[file_col]
+            if isinstance(col_data, pd.DataFrame):
+                col_data = col_data.iloc[:, 0]
+            standard_df[canonical] = col_data
         else:
             standard_df[canonical] = pd.NA
-            cols_to_keep.append(canonical)
             
-    standard_df = standard_df.rename(columns=rename_dict)
-    return standard_df[cols_to_keep]
+    return standard_df
