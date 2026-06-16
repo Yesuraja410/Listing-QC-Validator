@@ -17,6 +17,29 @@ URL_REGEX = re.compile(
     r'(?::\d+)?' 
     r'(?:/?|[/?]\S+)$', re.IGNORECASE)
 
+# Size Correction Dictionary
+SIZE_CORRECTIONS = {
+    "youth": "M",
+    "adult": "L",
+    "small": "S",
+    "osfa": "One Size",
+    "2xl": "XXL",
+    "3xl": "XXXL",
+    "4xl": "XXXXL",
+    "5xl": "XXXXXL",
+    "6xl": "XXXXXXL",
+    "7xl": "XXXXXXXL"
+}
+
+# Common Malay e-commerce keywords for TikTok MY validations
+MALAY_KEYWORDS = [
+    r"\buntuk\b", r"\bdengan\b", r"\byang\b", r"\bpada\b", r"\badalah\b", r"\bdan\b",
+    r"\blelaki\b", r"\bperempuan\b", r"\bwanita\b", r"\bsukan\b", r"\bkasut\b", r"\bbaju\b",
+    r"\bseluar\b", r"\bkanak\b", r"\bbudak\b", r"\basli\b", r"\bmurah\b", r"\bsaiz\b",
+    r"\bwarna\b", r"\bhitam\b", r"\bputih\b", r"\bmerah\b", r"\bbiru\b", r"\bhijau\b",
+    r"\bkuning\b", r"\bberlari\b", r"\bjersey\b"
+]
+
 def _safe_str(val):
     if val is None:
         return ""
@@ -61,65 +84,110 @@ def clean_str(val) -> str:
         return ""
     return str(val).strip()
 
+def correct_size(sz: str) -> str:
+    """Applies size corrections (e.g. Youth -> M, 2XL -> XXL)."""
+    s = str(sz).strip()
+    s_low = s.lower()
+    if s_low in SIZE_CORRECTIONS:
+        return SIZE_CORRECTIONS[s_low]
+    return s
+
+def is_footwear(product_name: str) -> bool:
+    """Classifies footwear products based on title keywords."""
+    name_low = str(product_name).lower()
+    footwear_kws = ["shoe", "shoes", "sneaker", "sneakers", "sandal", "sandals", "slide", "slides", "boot", "boots", "slippers", "cleat", "cleats", "footwear"]
+    return any(kw in name_low for kw in footwear_kws)
+
+def is_kids_apparel(gender: str, product_name: str) -> bool:
+    """Classifies Kids Apparel (Zalora Rus size rule)."""
+    g_low = str(gender).lower()
+    is_kid = g_low in ["kids", "boys", "girls"]
+    # Apparel is anything that is NOT footwear
+    return is_kid and not is_footwear(product_name)
+
 # ── Reference Mappings Builders ───────────────────────────────────────────────
 
-def build_content_maps(content_df: pd.DataFrame) -> Tuple[Dict[str, str], Dict[str, str], Dict[str, set], Dict[str, str]]:
+def build_content_maps(content_df: pd.DataFrame) -> Tuple[Dict, Dict, Dict, Dict, Dict, Dict, Dict, Dict]:
     """
-    Builds lookup tables from Content File:
-    1. sku_to_article: SKU -> Article No
-    2. sku_to_uksize: SKU -> uk_size
-    3. article_to_uksizes: Article No -> Set of valid UK sizes
-    4. sku_to_gender: SKU -> Gender
+    Builds lookup tables from Content File for UK, US, and Russian size mappings.
     """
     sku_to_article = {}
     sku_to_uksize = {}
-    article_to_uksizes = {}
+    sku_to_ussize = {}
+    sku_to_russize = {}
     sku_to_gender = {}
+    
+    article_to_uksizes = {}
+    article_to_ussizes = {}
+    article_to_russizes = {}
     
     if content_df is not None and not content_df.empty:
         has_sku = "SKU" in content_df.columns
         has_art = "Article No" in content_df.columns
-        has_uk_size = "uk_size" in content_df.columns
+        has_uk = "uk_size" in content_df.columns
+        has_us = "us_size" in content_df.columns
+        has_rus = "rus_size" in content_df.columns
         gender_col = next((c for c in content_df.columns if c.lower() in ["gender", "sex"]), None)
         
         for _, r in content_df.iterrows():
             sku_val = _clean_sku(r.get("SKU")) if has_sku else ""
             art_val = _normalise_article_no(r.get("Article No")) if has_art else ""
-            sz_val = _safe_str(r.get("uk_size")).strip() if has_uk_size else ""
+            uk_val = _safe_str(r.get("uk_size")).strip() if has_uk else ""
+            us_val = _safe_str(r.get("us_size")).strip() if has_us else ""
+            rus_val = _safe_str(r.get("rus_size")).strip() if has_rus else ""
             
             if sku_val:
                 if art_val:
                     sku_to_article[sku_val] = art_val
-                if sz_val:
-                    sku_to_uksize[sku_val] = sz_val
+                if uk_val:
+                    sku_to_uksize[sku_val] = uk_val
+                if us_val:
+                    sku_to_ussize[sku_val] = us_val
+                if rus_val:
+                    sku_to_russize[sku_val] = rus_val
                 if gender_col:
                     sku_to_gender[sku_val] = _safe_str(r.get(gender_col)).strip()
                     
-            if art_val and sz_val:
+            if art_val:
                 if art_val not in article_to_uksizes:
                     article_to_uksizes[art_val] = set()
-                article_to_uksizes[art_val].add(sz_val.lower())
+                if art_val not in article_to_ussizes:
+                    article_to_ussizes[art_val] = set()
+                if art_val not in article_to_russizes:
+                    article_to_russizes[art_val] = set()
+                    
+                if uk_val:
+                    article_to_uksizes[art_val].add(uk_val.lower())
+                if us_val:
+                    article_to_ussizes[art_val].add(us_val.lower())
+                if rus_val:
+                    article_to_russizes[art_val].add(rus_val.lower())
                 
-    return sku_to_article, sku_to_uksize, article_to_uksizes, sku_to_gender
+    return (
+        sku_to_article, sku_to_uksize, sku_to_ussize, sku_to_russize, sku_to_gender,
+        article_to_uksizes, article_to_ussizes, article_to_russizes
+    )
 
 
-def build_zecom_maps(zecom_df: pd.DataFrame, channel: str) -> Tuple[Dict[str, str], Dict[str, str]]:
+def build_zecom_maps(zecom_df: pd.DataFrame, channel: str) -> Tuple[Dict, Dict, Dict]:
     """
-    Builds lookup tables from zEcom File based on target channel platform:
+    Builds lookup tables from zEcom File:
     1. article_to_launchdate: Article No -> Launch Date
     2. article_to_ecomstatus: Article No -> Ecom Status (Active vs Inactive)
+    3. article_to_rrpprice: Article No -> RRP Price
     """
     article_to_launchdate = {}
     article_to_ecomstatus = {}
+    article_to_rrpprice = {}
     
     if zecom_df is not None and not zecom_df.empty:
-        # e.g., Lazada SG -> Lazada, Shopee PH -> Shopee
         platform = channel.split()[0].lower()
-        ecom_col = f"Ecom_{platform.capitalize()}" # Ecom_Lazada, Ecom_Shopee, etc.
+        ecom_col = f"Ecom_{platform.capitalize()}"
         
         has_art = "Article No" in zecom_df.columns
         has_launch = "Launch Date" in zecom_df.columns
         has_ecom = ecom_col in zecom_df.columns
+        has_rrp = "rrp_price" in zecom_df.columns
         
         for _, r in zecom_df.iterrows():
             art_val = _normalise_article_no(r.get("Article No"))
@@ -137,20 +205,24 @@ def build_zecom_maps(zecom_df: pd.DataFrame, channel: str) -> Tuple[Dict[str, st
                 if has_ecom:
                     article_to_ecomstatus[art_val] = _safe_str(r.get(ecom_col))
                     
-    return article_to_launchdate, article_to_ecomstatus
+                if has_rrp:
+                    article_to_rrpprice[art_val] = _safe_str(r.get("rrp_price"))
+                    
+    return article_to_launchdate, article_to_ecomstatus, article_to_rrpprice
 
 # ── Row Validation Logic ──────────────────────────────────────────────────────
 
 def validate_row_internal(
     row: pd.Series, 
     idx: int, 
-    content_maps: Tuple = (None, None, None, None),
-    zecom_maps: Tuple = (None, None),
+    channel: str,
+    content_maps: Tuple = (None, None, None, None, None, None, None, None),
+    zecom_maps: Tuple = (None, None, None),
     allowed_genders: List[str] = ALLOWED_GENDERS, 
     allowed_statuses: List[str] = ALLOWED_STATUSES
 ) -> List[Dict]:
     """
-    Validates a single row for Internal QC with reference lookups.
+    Validates a single row for Internal QC with reference lookups, US/Rus size checks, and RRP price checks.
     """
     exceptions = []
     source_file = row.get("_source_file", "Unknown File")
@@ -160,11 +232,16 @@ def validate_row_internal(
     sku_val = _clean_sku(row.get("sku", ""))
     prod_name = clean_str(row.get("product_name", ""))
     gender = clean_str(row.get("gender", ""))
-    size = clean_str(row.get("size", ""))
     ecom_status = clean_str(row.get("ecommerce_status", ""))
     
-    sku_to_article, sku_to_uksize, article_to_uksizes, sku_to_gender = content_maps
-    article_to_launchdate, article_to_ecomstatus = zecom_maps
+    # ── 1. Apply Size Corrections ──
+    raw_size = clean_str(row.get("size", ""))
+    size = correct_size(raw_size)
+    
+    sku_to_article, sku_to_uksize, sku_to_ussize, sku_to_russize, sku_to_gender, \
+        article_to_uksizes, article_to_ussizes, article_to_russizes = content_maps
+        
+    article_to_launchdate, article_to_ecomstatus, article_to_rrpprice = zecom_maps
 
     def add_exc(field: str, val, severity: str, msg: str):
         exceptions.append({
@@ -181,9 +258,6 @@ def validate_row_internal(
     # 1. Article Number Basic Check
     if is_empty(row.get("article_number")):
         add_exc("Article Number", row.get("article_number"), "Error", "Article Number is missing.")
-    else:
-        if not re.match(r"^[a-zA-Z0-9-_]+$", art_num):
-            add_exc("Article Number", art_num, "Warning", "Article Number contains special characters. Standard alphanumeric recommended.")
 
     # 2. SKU Basic Check
     if is_empty(row.get("sku")):
@@ -259,21 +333,19 @@ def validate_row_internal(
     if is_empty(row.get("size")):
         add_exc("Size", row.get("size"), "Error", "Size is missing.")
 
-    # 9. Quantity Check
+    # 9. Strict Quantity Check: Quantity must be exactly 0
     qty_raw = row.get("quantity")
     if is_empty(qty_raw):
         add_exc("Quantity", qty_raw, "Error", "Quantity is missing.")
     else:
         try:
             qty = float(qty_raw)
-            if qty < 0:
-                add_exc("Quantity", qty_raw, "Error", "Quantity cannot be negative.")
-            elif not qty.is_integer():
-                add_exc("Quantity", qty_raw, "Error", "Quantity must be a whole integer.")
+            if qty != 0:
+                add_exc("Quantity", qty_raw, "Error", f"Quantity must be exactly 0 (Uploaded: {qty_raw}).")
         except (ValueError, TypeError):
             add_exc("Quantity", qty_raw, "Error", "Quantity is not a valid number.")
 
-    # 10. Price Check
+    # 10. Price Check & RRP zEcom Comparison
     price_raw = row.get("price")
     if is_empty(price_raw):
         add_exc("Price", price_raw, "Error", "Price is missing.")
@@ -285,6 +357,14 @@ def validate_row_internal(
         except (ValueError, TypeError):
             add_exc("Price", price_raw, "Error", "Price is not a valid number.")
 
+    # ── TikTok MY Malay Language Validation ──
+    if "TikTok" in channel:
+        title_desc_combined = prod_name.lower()
+        # Malay lang check: check if any of the common malay keywords are in title/name
+        has_malay = any(re.search(pat, title_desc_combined) for pat in MALAY_KEYWORDS)
+        if not has_malay:
+            add_exc("Product Name", prod_name, "Warning", "TikTok Listing: Title/Description should contain Malay language words (e.g. untuk, lelaki, wanita, kasut, saiz).")
+
     # ── Reference File Cross-Validation Logic ─────────────────────────────────
 
     # A. Content File checks
@@ -295,11 +375,30 @@ def validate_row_internal(
                 if norm_art and norm_art != ref_art:
                     add_exc("Article Number", art_num, "Error", f"Article mismatch: Uploaded Article No '{art_num}' does not match Content File Article No '{ref_art}' for SKU '{sku_val}'.")
                 
-                # Size Checkup: Refer UK size from Content File
-                if size and sku_to_uksize and sku_val in sku_to_uksize:
-                    ref_uksize = sku_to_uksize[sku_val]
-                    if size.strip().lower() != ref_uksize.strip().lower():
-                        add_exc("Size", size, "Error", f"Size mismatch: Uploaded size '{size}' does not match UK size '{ref_uksize}' in Content File for SKU '{sku_val}'.")
+                # Size Checkup dynamic logic: US size / Rus size / UK size
+                if size:
+                    # Choose size reference based on Channel & Footwear / Apparel classification
+                    if channel == "Lazada PH" and is_footwear(prod_name):
+                        # US Size
+                        ref_size = sku_to_ussize.get(sku_val, "")
+                        size_type = "US size"
+                        valid_sizes_for_art = article_to_ussizes.get(norm_art, set())
+                    elif channel in ["Zalora SG", "Zalora MY", "Zalora PH"] and is_kids_apparel(gender, prod_name):
+                        # Rus Size
+                        ref_size = sku_to_russize.get(sku_val, "")
+                        size_type = "Rus size"
+                        valid_sizes_for_art = article_to_russizes.get(norm_art, set())
+                    else:
+                        # UK Size (Default)
+                        ref_size = sku_to_uksize.get(sku_val, "")
+                        size_type = "UK size"
+                        valid_sizes_for_art = article_to_uksizes.get(norm_art, set())
+                        
+                    if ref_size:
+                        if size.strip().lower() != ref_size.strip().lower():
+                            add_exc("Size", raw_size, "Error", f"Size mismatch: Size '{raw_size}' (Normalized: '{size}') does not match reference {size_type} '{ref_size}' in Content File for SKU '{sku_val}'.")
+                    else:
+                        add_exc("Size", raw_size, "Warning", f"No {size_type} mapped in Content File for SKU '{sku_val}'.")
                 
                 # Gender Check from Content File
                 if gender and sku_to_gender and sku_val in sku_to_gender:
@@ -307,20 +406,38 @@ def validate_row_internal(
                     if ref_gender and gender.strip().lower() != ref_gender.strip().lower():
                         add_exc("Gender", gender, "Warning", f"Gender mismatch: Uploaded gender '{gender}' does not match Content File gender '{ref_gender}' for SKU '{sku_val}'.")
             else:
-                add_exc("SKU", sku_val, "Warning", f"SKU '{sku_val}' not found in Content File EAN lookup.")
+                add_exc("SKU", sku_val, "Warning", f"SKU '{sku_val}' not found in Content File lookup.")
                 # Fallback size checking using Article No
-                if norm_art and size and article_to_uksizes and norm_art in article_to_uksizes:
-                    valid_uksizes = article_to_uksizes[norm_art]
-                    if size.strip().lower() not in valid_uksizes:
-                        add_exc("Size", size, "Error", f"Size mismatch: Uploaded size '{size}' is not in the list of valid UK sizes ({', '.join(sorted(list(valid_uksizes)))}) in Content File for Article No '{art_num}'.")
+                if norm_art and size:
+                    if channel == "Lazada PH" and is_footwear(prod_name):
+                        valid_sizes = article_to_ussizes.get(norm_art, set())
+                        size_type = "US size"
+                    elif channel in ["Zalora SG", "Zalora MY", "Zalora PH"] and is_kids_apparel(gender, prod_name):
+                        valid_sizes = article_to_russizes.get(norm_art, set())
+                        size_type = "Rus size"
+                    else:
+                        valid_sizes = article_to_uksizes.get(norm_art, set())
+                        size_type = "UK size"
+                        
+                    if valid_sizes and size.strip().lower() not in valid_sizes:
+                        add_exc("Size", raw_size, "Error", f"Size mismatch: Size '{raw_size}' (Normalized: '{size}') is not in the list of valid {size_type}s ({', '.join(sorted(list(valid_sizes)))}) in Content File for Article No '{art_num}'.")
         else:
             # Check size by Article No alone if SKU is missing
-            if norm_art and size and article_to_uksizes and norm_art in article_to_uksizes:
-                valid_uksizes = article_to_uksizes[norm_art]
-                if size.strip().lower() not in valid_uksizes:
-                    add_exc("Size", size, "Error", f"Size mismatch: Uploaded size '{size}' is not in the list of valid UK sizes ({', '.join(sorted(list(valid_uksizes)))}) in Content File for Article No '{art_num}'.")
+            if norm_art and size:
+                if channel == "Lazada PH" and is_footwear(prod_name):
+                    valid_sizes = article_to_ussizes.get(norm_art, set())
+                    size_type = "US size"
+                elif channel in ["Zalora SG", "Zalora MY", "Zalora PH"] and is_kids_apparel(gender, prod_name):
+                    valid_sizes = article_to_russizes.get(norm_art, set())
+                    size_type = "Rus size"
+                else:
+                    valid_sizes = article_to_uksizes.get(norm_art, set())
+                    size_type = "UK size"
+                    
+                if valid_sizes and size.strip().lower() not in valid_sizes:
+                    add_exc("Size", raw_size, "Error", f"Size mismatch: Size '{raw_size}' (Normalized: '{size}') is not in the list of valid {size_type}s ({', '.join(sorted(list(valid_sizes)))}) in Content File for Article No '{art_num}'.")
 
-    # B. zEcom File checks
+    # B. zEcom File checks (including RRP price validations)
     if article_to_ecomstatus is not None:
         if norm_art:
             if norm_art in article_to_ecomstatus:
@@ -341,6 +458,19 @@ def validate_row_internal(
                                 add_exc("Launch Date", launch_date_raw, "Warning", f"Launch Date mismatch: Uploaded '{launch_date_raw}' does not match zEcom File Launch Date '{ref_ld_str}'.")
                         except Exception:
                             pass
+                            
+                # zEcom RRP Price validation
+                if price_raw and norm_art in article_to_rrpprice:
+                    rrp_raw = article_to_rrpprice[norm_art]
+                    if rrp_raw:
+                        try:
+                            uploaded_p = float(price_raw)
+                            # Strip any currency characters in reference price
+                            ref_p_f = float(re.sub(r'[^\d\.]', '', str(rrp_raw)))
+                            if not np.isclose(uploaded_p, ref_p_f):
+                                add_exc("Price", price_raw, "Error", f"Price mismatch: Uploaded price '{price_raw}' does not match RRP Price '{rrp_raw}' from zEcom File for Article No '{art_num}'.")
+                        except Exception:
+                            pass
             else:
                 add_exc("Article Number", art_num, "Error", f"Article No '{art_num}' not found in zEcom File lookup.")
 
@@ -350,8 +480,9 @@ def validate_row_internal(
 def validate_row_post(
     row: pd.Series, 
     idx: int, 
-    content_maps: Tuple = (None, None, None, None),
-    zecom_maps: Tuple = (None, None),
+    channel: str,
+    content_maps: Tuple = (None, None, None, None, None, None, None, None),
+    zecom_maps: Tuple = (None, None, None),
     check_live_images: bool = False, 
     allowed_genders: List[str] = ALLOWED_GENDERS, 
     allowed_statuses: List[str] = ALLOWED_STATUSES
@@ -360,7 +491,7 @@ def validate_row_post(
     Validates a single row for Post QC.
     Inherits Internal QC checks, then checks Images and Size Chart columns.
     """
-    exceptions = validate_row_internal(row, idx, content_maps, zecom_maps, allowed_genders, allowed_statuses)
+    exceptions = validate_row_internal(row, idx, channel, content_maps, zecom_maps, allowed_genders, allowed_statuses)
     
     source_file = row.get("_source_file", "Unknown File")
     row_num = row.get("_original_row_number", idx + 2)
@@ -435,20 +566,19 @@ def validate_dataframe(
     allowed_statuses: List[str] = ALLOWED_STATUSES
 ) -> Tuple[pd.DataFrame, pd.DataFrame, List[str]]:
     """
-    Validates a whole standardized DataFrame.
+    Validates a whole standardized DataFrame with UK, US, Russian size and zEcom RRP rules.
     """
     logs = []
     logs.append(f"Starting validation run at {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logs.append(f"Validation Stage: {qc_stage} | Target Channel: {channel}")
     logs.append(f"Dataset contains {len(df)} records.")
     
-    # Build maps
     with st.spinner("Indexing Content Reference mappings..."):
         content_maps = build_content_maps(content_df)
-        logs.append("Content File mappings built successfully.")
+        logs.append("Content File size mappings built successfully.")
     with st.spinner("Indexing zEcom Reference mappings..."):
         zecom_maps = build_zecom_maps(zecom_df, channel)
-        logs.append(f"zEcom File mappings built successfully for channel: {channel}.")
+        logs.append(f"zEcom File status and RRP price mappings built successfully.")
         
     all_exceptions = []
     
@@ -457,41 +587,42 @@ def validate_dataframe(
     status_col = []
     details_col = []
     
-    # Group by SKU to check duplicate listings (Upload Sheet could have duplicates)
-    # Using Article+Size composite key if SKU is missing
-    duplicate_mask = df.duplicated(subset=["sku", "size"], keep=False)
-    valid_skus = df["sku"].dropna().astype(str).str.strip()
-    valid_skus = valid_skus[valid_skus != ""]
-    
+    # Group by SKU and Size (after applying corrections) to find duplicates
     duplicate_skus_sizes = set()
-    dup_df = df[df["sku"].isin(valid_skus)]
-    if not dup_df.empty:
-        dups = dup_df[dup_df.duplicated(subset=["sku", "size"], keep=False)]
-        for _, dup_row in dups.iterrows():
-            sk = str(dup_row["sku"]).strip()
-            sz = str(dup_row["size"]).strip()
-            duplicate_skus_sizes.add((sk, sz))
-            
+    if "sku" in df.columns and "size" in df.columns:
+        valid_skus = df["sku"].dropna().astype(str).str.strip()
+        valid_skus = valid_skus[valid_skus != ""]
+        dup_df = df[df["sku"].isin(valid_skus)].copy()
+        if not dup_df.empty:
+            dup_df["_corrected_size"] = dup_df["size"].apply(correct_size).astype(str).str.strip().str.lower()
+            dups = dup_df[dup_df.duplicated(subset=["sku", "_corrected_size"], keep=False)]
+            for _, dup_row in dups.iterrows():
+                sk = str(dup_row["sku"]).strip()
+                sz = str(dup_row["_corrected_size"]).strip()
+                duplicate_skus_sizes.add((sk, sz))
+                
     logs.append(f"Found {len(duplicate_skus_sizes)} duplicate sku+size combinations in upload sheet.")
 
     for idx, row in df.iterrows():
         if qc_stage == "Internal QC":
-            row_exceptions = validate_row_internal(row, idx, content_maps, zecom_maps, allowed_genders, allowed_statuses)
+            row_exceptions = validate_row_internal(row, idx, channel, content_maps, zecom_maps, allowed_genders, allowed_statuses)
         else:
-            row_exceptions = validate_row_post(row, idx, content_maps, zecom_maps, check_live_images, allowed_genders, allowed_statuses)
+            row_exceptions = validate_row_post(row, idx, channel, content_maps, zecom_maps, check_live_images, allowed_genders, allowed_statuses)
             
         sk = _clean_sku(row.get("sku", ""))
-        sz = clean_str(row.get("size", ""))
-        if (sk, sz) in duplicate_skus_sizes:
+        raw_size = clean_str(row.get("size", ""))
+        sz_corrected = correct_size(raw_size).strip().lower()
+        
+        if (sk, sz_corrected) in duplicate_skus_sizes:
             row_exceptions.append({
                 "Source File": row.get("_source_file", "Unknown File"),
                 "Row Number": row.get("_original_row_number", idx + 2),
                 "Article Number": clean_str(row.get("article_number", "")),
                 "Product Name": clean_str(row.get("product_name", "")),
                 "Field": "SKU & Size",
-                "Value": f"SKU: {sk}, Size: {sz}",
+                "Value": f"SKU: {sk}, Size: {raw_size}",
                 "Severity": "Warning",
-                "Message": f"Duplicate record: product with SKU '{sk}' and size '{sz}' is uploaded multiple times."
+                "Message": f"Duplicate record: product with SKU '{sk}' and corrected size '{correct_size(raw_size)}' is uploaded multiple times."
             })
             
         row_errors = sum(1 for e in row_exceptions if e["Severity"] == "Error")
@@ -529,7 +660,6 @@ def validate_dataframe(
 def compare_source_and_live(source_df: pd.DataFrame, live_df: pd.DataFrame, match_column: str = "sku") -> Tuple[pd.DataFrame, Dict]:
     """
     Compares Standardized Source Data against Standardized Live Data.
-    Normally matches by SKU.
     """
     comparison_records = []
     
@@ -544,8 +674,8 @@ def compare_source_and_live(source_df: pd.DataFrame, live_df: pd.DataFrame, matc
     composite_match = "size" in src_clean.columns and "size" in live_clean.columns
     
     if composite_match:
-        src_clean["_match_key"] = src_clean[match_column] + " | " + src_clean["size"].astype(str).str.strip()
-        live_clean["_match_key"] = live_clean[match_column] + " | " + live_clean["size"].astype(str).str.strip()
+        src_clean["_match_key"] = src_clean[match_column] + " | " + src_clean["size"].astype(str).str.strip().apply(correct_size).str.lower()
+        live_clean["_match_key"] = live_clean[match_column] + " | " + live_clean["size"].astype(str).str.strip().apply(correct_size).str.lower()
         key_col = "_match_key"
     else:
         key_col = match_column
@@ -583,16 +713,9 @@ def compare_source_and_live(source_df: pd.DataFrame, live_df: pd.DataFrame, matc
             row_mismatches = []
             
             for field in fields_to_compare:
-                # In standard live df loaded via loaders, columns are renamed to match standard comparison keys:
-                # MP Stock -> quantity
-                # MP Status -> ecommerce_status
-                # MP Price -> price
-                # MP Product Name -> product_name
-                # Let's map target comparison keys
                 src_field = field
                 live_field = field
                 
-                # Check for marketplace specific columns from live_loaders
                 if field == "quantity" and "MP Stock" in live_row:
                     live_field = "MP Stock"
                 if field == "ecommerce_status" and "MP Status" in live_row:
@@ -609,7 +732,6 @@ def compare_source_and_live(source_df: pd.DataFrame, live_df: pd.DataFrame, matc
                     is_diff = False
                     if field in ["price", "quantity"]:
                         try:
-                            # Strip currency or symbols
                             s_f = float(re.sub(r'[^\d\.]', '', str(s_val))) if s_val else 0.0
                             l_f = float(re.sub(r'[^\d\.]', '', str(l_val))) if l_val else 0.0
                             is_diff = not np.isclose(s_f, l_f)
@@ -667,7 +789,6 @@ def compare_source_and_live(source_df: pd.DataFrame, live_df: pd.DataFrame, matc
             if isinstance(live_row, pd.DataFrame):
                 live_row = live_row.iloc[0]
                 
-            # If live row has SKU, try to lookup Article No from content?
             comparison_records.append({
                 "Article Number": live_row.get("Article No", "Unknown"),
                 "Size": live_row.get("size", "N/A") if "size" in live_row else "N/A",
