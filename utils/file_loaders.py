@@ -8,10 +8,13 @@ import streamlit as st
 
 # Synonyms for auto-mapping columns
 COLUMN_SYNONYMS = {
+    "sku": [
+        "seller sku", "sku", "seller_sku", "ean", "barcode", "upc", 
+        "item code", "item_code", "product sku", "product_sku", "seller sku sku"
+    ],
     "article_number": [
-        "article number", "article no", "article", "sku", "product sku", 
-        "seller sku", "article_number", "art no", "art_no", "item code", 
-        "item_code", "style code", "style_code", "style number", "style_no"
+        "article number", "article no", "article", "article_number", "art no", 
+        "art_no", "style code", "style_code", "style number", "style_no"
     ],
     "ecommerce_status": [
         "e-commerce status", "ecommerce status", "status", "ecom status", 
@@ -59,6 +62,7 @@ COLUMN_SYNONYMS = {
 }
 
 CANONICAL_LABELS = {
+    "sku": "Seller SKU",
     "article_number": "Article Number",
     "ecommerce_status": "E-commerce Status",
     "launch_date": "Launch Date",
@@ -170,11 +174,21 @@ def _read_file(file, header_row=0, skiprows=None):
         return pd.DataFrame()
 
 def load_file_to_df(file_or_path, filename: str = None) -> pd.DataFrame:
-    return _read_file(file_or_path)
+    df = _read_file(file_or_path, header_row=0, skiprows=[0, 2])
+    if df.empty or not any(c in df.columns for c in ["Seller SKU", "SKU", "SellerSKU", "Product Name", "Variation 1"]):
+        df_normal = _read_file(file_or_path, header_row=0, skiprows=None)
+        if not df_normal.empty:
+            return df_normal
+    return df
 
 def load_google_sheet(url: str) -> pd.DataFrame:
     csv_url = parse_google_sheets_url(url)
-    return pd.read_csv(csv_url, skiprows=[0, 2], dtype=str)
+    df = pd.read_csv(csv_url, skiprows=[0, 2], dtype=str)
+    if df.empty or not any(c in df.columns for c in ["Seller SKU", "SKU", "SellerSKU", "Product Name", "Variation 1"]):
+        df_normal = pd.read_csv(csv_url, dtype=str)
+        if not df_normal.empty:
+            return df_normal
+    return df
 
 def _read_zip(file, header_row=0, skiprows=None):
     raw = file.read()
@@ -646,16 +660,19 @@ def load_content(file):
     elif "EAN" in df.columns and "SKU" not in df.columns:
         df = df.rename(columns={"EAN": "SKU"})
         
-    # Map Article Number (Color_No, ALU)
-    art_col = next((c for c in df.columns if c.lower() in ["color_no", "color no", "alu", "article no", "article number", "articleno"]), None)
-    if art_col:
-        df = df.rename(columns={art_col: "Article No"})
-    else:
-        # Fallback loop
+    # Map Article Number (exact candidates first)
+    art_col = None
+    for c in ["Article No", "Color_No", "Color_No.1", "ArticleNo", "Article Number"]:
+        if c in df.columns:
+            art_col = c
+            break
+    if art_col is None:
         for c in df.columns:
-            if "article" in c.lower() or "color_no" in c.lower() or "color no" in c.lower() or "alu" in c.lower():
-                df = df.rename(columns={c: "Article No"})
+            if "article" in c.lower() or "color" in c.lower():
+                art_col = c
                 break
+    if art_col and art_col != "Article No":
+        df = df.rename(columns={art_col: "Article No"})
                 
     # Map Color Name
     color_name_col = next((c for c in df.columns if c.lower() in ["color name", "colorname", "color_name", "colour name", "colour_name"]), None)
@@ -700,9 +717,12 @@ def load_zecom(file, country="PH"):
     name = file.name.lower()
     file.seek(0)
 
-    preferred_article_cols = [
-        "PIM Article#", "PIM Article #", "Style#", "STYLE#", "style#", "Article No", "ArticleNo"
-    ]
+    article_col_by_country = {
+        "PH": ["PIM Article#", "PIM Article #", "Article No", "ArticleNo"],
+        "MY": ["Style#", "STYLE#", "style#", "Article No", "PIM Article#"],
+        "SG": ["STYLE#", "Style#", "style#", "Article No", "PIM Article#"],
+    }
+    preferred_article_cols = article_col_by_country.get(country, ["Article No"])
     preferred_rows = [2, 1, 0, 3] if country == "PH" else [3, 2, 1, 0]
 
     try:
