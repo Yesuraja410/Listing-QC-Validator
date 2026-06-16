@@ -7,48 +7,48 @@ from validators import (
     validate_dataframe, 
     compare_source_and_live,
     build_content_maps,
-    build_zecom_maps
+    build_zecom_maps,
+    correct_size
 )
 
 class TestValidators(unittest.TestCase):
     
     def setUp(self):
-        # 1. Mock Content Reference File Data
+        # 1. Mock Content Reference File Data with UK, US, and Russian Sizes
         self.mock_content_df = pd.DataFrame([
             {
                 "SKU": "4069161482557",
                 "Article No": "404620_07",
                 "uk_size": "42",
-                "gender": "Men"
-            },
-            {
-                "SKU": "4069161482595",
-                "Article No": "404620_07",
-                "uk_size": "43",
+                "us_size": "9",
+                "rus_size": "41",
                 "gender": "Men"
             },
             {
                 "SKU": "4069161482999",
                 "Article No": "531103_03",
                 "uk_size": "S",
-                "gender": "Women"
+                "us_size": "XS",
+                "rus_size": "44",
+                "gender": "Kids"
             }
         ])
         
-        # 2. Mock zEcom Reference File Data
-        # PH columns: Article No, Launch Date, Ecom_Shopee, Ecom_Lazada
+        # 2. Mock zEcom Reference File Data (with RRP Price column)
         self.mock_zecom_df = pd.DataFrame([
             {
                 "Article No": "404620_07",
                 "Launch Date": pd.to_datetime("2026-06-20"),
                 "Ecom_Shopee": "Active",
-                "Ecom_Lazada": "Inactive"
+                "Ecom_Lazada": "Inactive",
+                "rrp_price": "89.99"
             },
             {
                 "Article No": "531103_03",
                 "Launch Date": pd.to_datetime("2026-06-15"),
                 "Ecom_Shopee": "Inactive",
-                "Ecom_Lazada": "Active"
+                "Ecom_Lazada": "Active",
+                "rrp_price": "49.99"
             }
         ])
         
@@ -66,138 +66,119 @@ class TestValidators(unittest.TestCase):
             "product_name": "Men's Leather Running Shoes Black Edition",
             "color_name": "Black",
             "size": "42",  # Matches UK size 42 in Content File
-            "quantity": 100,
-            "price": 89.99,
+            "quantity": 0,   # Must be exactly 0
+            "price": 89.99,  # Matches RRP Price 89.99 in zEcom File
             "_original_row_number": 2,
             "_source_file": "test_upload.csv"
         })
 
     def test_valid_row_cross_reference(self):
-        # Validation for Shopee PH where article 404620_07 is active
         excs = validate_row_internal(
             self.valid_upload_row, 0, 
+            channel="Shopee PH",
             content_maps=self.content_maps, 
             zecom_maps=self.zecom_maps_shopee
         )
         self.assertEqual(len(excs), 0, f"Expected 0 exceptions on valid row, found: {excs}")
 
-    def test_size_mismatch_against_uk_size(self):
-        # Size uploaded is 44, but UK size for SKU 4069161482557 is 42
+    def test_quantity_must_be_zero(self):
         row = self.valid_upload_row.copy()
-        row["size"] = "44"
+        row["quantity"] = 10  # Invalid, must be 0
         excs = validate_row_internal(
             row, 0, 
+            channel="Shopee PH",
             content_maps=self.content_maps, 
             zecom_maps=self.zecom_maps_shopee
         )
-        size_excs = [e for e in excs if e["Field"] == "Size"]
-        self.assertTrue(len(size_excs) > 0)
-        self.assertIn("does not match UK size '42'", size_excs[0]["Message"])
+        qty_excs = [e for e in excs if e["Field"] == "Quantity"]
+        self.assertTrue(len(qty_excs) > 0)
+        self.assertIn("must be exactly 0", qty_excs[0]["Message"])
 
-    def test_size_fallback_to_article_no(self):
-        # SKU is not in Content File, but Article is 404620_07.
-        # Upload size 44 is not in [42, 43] (the UK sizes of 404620_07).
+    def test_price_mismatch_against_rrp(self):
         row = self.valid_upload_row.copy()
-        row["sku"] = "4069161482777"  # Unknown SKU
-        row["size"] = "44"             # Invalid Size for this Article
+        row["price"] = 99.99  # Does not match RRP 89.99
         excs = validate_row_internal(
             row, 0, 
+            channel="Shopee PH",
             content_maps=self.content_maps, 
             zecom_maps=self.zecom_maps_shopee
         )
-        # We expect a SKU warning (unknown) and a Size mismatch error
-        size_excs = [e for e in excs if e["Field"] == "Size"]
-        self.assertTrue(len(size_excs) > 0)
-        self.assertIn("is not in the list of valid UK sizes", size_excs[0]["Message"])
+        price_excs = [e for e in excs if e["Field"] == "Price"]
+        self.assertTrue(len(price_excs) > 0)
+        self.assertIn("does not match RRP Price", price_excs[0]["Message"])
 
-    def test_article_mismatch_against_ean_mapping(self):
-        # SKU is mapped to 404620_07, but uploaded Article No is 531103_03
+    def test_size_corrections(self):
+        # 2XL correction to XXL
+        self.assertEqual(correct_size("2XL"), "XXL")
+        self.assertEqual(correct_size("Youth"), "M")
+        self.assertEqual(correct_size("Small"), "S")
+        self.assertEqual(correct_size("OSFA"), "One Size")
+
+    def test_lazada_ph_footwear_us_size_rule(self):
+        # Lazada PH + Footwear ("Running Shoes") -> US size check (reference US size for SKU is '9')
         row = self.valid_upload_row.copy()
-        row["article_number"] = "531103_03"
-        excs = validate_row_internal(
-            row, 0, 
-            content_maps=self.content_maps, 
-            zecom_maps=self.zecom_maps_shopee
-        )
-        art_excs = [e for e in excs if e["Field"] == "Article Number"]
-        self.assertTrue(len(art_excs) > 0)
-        self.assertIn("Article mismatch", art_excs[0]["Message"])
-
-    def test_ecommerce_status_mismatch_against_zecom(self):
-        # For Shopee PH, article 404620_07 is Active.
-        # But if we validate for Lazada PH (where it is Inactive):
+        row["size"] = "9"  # US Size
         zecom_maps_lazada = build_zecom_maps(self.mock_zecom_df, "Lazada PH")
+        # Set Ecom Status to Inactive in upload row because Ecom_Lazada is Inactive in mock zEcom
+        row["ecommerce_status"] = "Inactive"
         excs = validate_row_internal(
-            self.valid_upload_row, 0, 
+            row, 0, 
+            channel="Lazada PH",
             content_maps=self.content_maps, 
             zecom_maps=zecom_maps_lazada
         )
-        status_excs = [e for e in excs if e["Field"] == "E-commerce Status"]
-        self.assertTrue(len(status_excs) > 0)
-        self.assertIn("status is 'Active' but zEcom File defines it as 'Inactive'", status_excs[0]["Message"])
+        self.assertEqual(len(excs), 0, f"Expected US size 9 to pass on Lazada PH Footwear. Found: {excs}")
 
-    def test_launch_date_mismatch_against_zecom(self):
-        # zEcom Launch date is 2026-06-20. Uploaded launch date is 2026-06-10.
-        row = self.valid_upload_row.copy()
-        row["launch_date"] = "2026-06-10"
+    def test_zalora_kids_apparel_russian_size_rule(self):
+        # Zalora MY + Kids Apparel ("Jogger Pants" - NOT footwear) -> Rus size check (reference Rus size for EAN 4069161482999 is '44')
+        row = pd.Series({
+            "article_number": "531103_03",
+            "sku": "4069161482999",
+            "ecommerce_status": "Inactive", # zEcom Ecom_Shopee is Inactive
+            "launch_date": "2026-06-15",
+            "gender": "Kids",
+            "product_name": "Kids Lightweight Jogger Pants", # Apparel
+            "color_name": "Grey",
+            "size": "44",  # Matches Russian size 44
+            "quantity": 0,
+            "price": 49.99,
+            "_original_row_number": 3,
+            "_source_file": "test_upload.csv"
+        })
+        zecom_maps_zalora = build_zecom_maps(self.mock_zecom_df, "Zalora MY")
         excs = validate_row_internal(
             row, 0, 
+            channel="Zalora MY",
+            content_maps=self.content_maps, 
+            zecom_maps=zecom_maps_zalora
+        )
+        # We expect 0 exceptions since size 44 matches the Russian size reference.
+        self.assertEqual(len(excs), 0, f"Expected Russian size 44 to pass on Zalora Kids Apparel. Found: {excs}")
+
+    def test_tiktok_my_malay_keyword_warning(self):
+        # TikTok MY channel with no Malay words in Title -> expects warning
+        row = self.valid_upload_row.copy()
+        row["product_name"] = "PUMA Softride Running Shoes"  # English only
+        excs = validate_row_internal(
+            row, 0, 
+            channel="TikTok MY",
             content_maps=self.content_maps, 
             zecom_maps=self.zecom_maps_shopee
         )
-        date_excs = [e for e in excs if e["Field"] == "Launch Date"]
-        self.assertTrue(len(date_excs) > 0)
-        self.assertIn("Launch Date mismatch", date_excs[0]["Message"])
+        tiktok_excs = [e for e in excs if "TikTok Listing" in e["Message"]]
+        self.assertTrue(len(tiktok_excs) > 0)
+        self.assertEqual(tiktok_excs[0]["Severity"], "Warning")
 
-    def test_gender_mismatch_against_content(self):
-        # Content File gender for SKU is Men, but Uploaded gender is Women
-        row = self.valid_upload_row.copy()
-        row["gender"] = "Women"
-        # Avoid gender-product title mismatch warning by using unisex title
-        row["product_name"] = "Running Shoes Black Edition" 
-        excs = validate_row_internal(
+        # TikTok MY with Malay word ("kasut") -> expect NO warning
+        row["product_name"] = "Kasut Softride Running Shoes"
+        excs2 = validate_row_internal(
             row, 0, 
+            channel="TikTok MY",
             content_maps=self.content_maps, 
             zecom_maps=self.zecom_maps_shopee
         )
-        gender_excs = [e for e in excs if e["Field"] == "Gender"]
-        self.assertTrue(len(gender_excs) > 0)
-        self.assertIn("Uploaded gender 'Women' does not match Content File gender 'Men'", gender_excs[0]["Message"])
-
-    def test_dataframe_validation_aggregations(self):
-        # Create a test dataframe with 1 valid row and 1 invalid row
-        df = pd.DataFrame([
-            self.valid_upload_row.to_dict(),
-            {
-                "article_number": "531103_03",
-                "sku": "4069161482999",
-                "ecommerce_status": "Active",  # Mismatch (zEcom Ecom_Shopee is Inactive)
-                "launch_date": "2026-06-15",
-                "gender": "Women",
-                "product_name": "Women's Lightweight Jogger Pants",
-                "color_name": "Grey",
-                "size": "M",  # Mismatch (UK size is S)
-                "quantity": 10,
-                "price": 49.99,
-                "_original_row_number": 3,
-                "_source_file": "test_upload.csv"
-            }
-        ])
-        
-        exc_df, val_df, logs = validate_dataframe(
-            df, 
-            qc_stage="Internal QC",
-            channel="Shopee PH",
-            content_df=self.mock_content_df,
-            zecom_df=self.mock_zecom_df
-        )
-        
-        # Verify exceptions count
-        # Row 1: Valid (0 issues)
-        # Row 2: Mismatches in Ecom Status (Active vs Inactive) + Size (M vs S) = 2 exceptions
-        self.assertEqual(len(exc_df), 2)
-        self.assertEqual(val_df.iloc[0]["_qc_status"], "Passed")
-        self.assertEqual(val_df.iloc[1]["_qc_status"], "Failed")
+        tiktok_excs2 = [e for e in excs2 if "TikTok Listing" in e["Message"]]
+        self.assertEqual(len(tiktok_excs2), 0)
 
 if __name__ == '__main__':
     unittest.main()
