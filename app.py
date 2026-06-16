@@ -140,6 +140,8 @@ with st.sidebar:
     
     upload_dfs = {}
     if input_mode == "File Upload (Excel/CSV)":
+        if "gsheet_error" in st.session_state:
+            del st.session_state["gsheet_error"]
         uploaded_files = st.file_uploader(
             "Upload Target Sheet",
             type=["xlsx", "xls", "csv"],
@@ -158,13 +160,19 @@ with st.sidebar:
             "Google Sheets Share Link",
             placeholder="https://docs.google.com/spreadsheets/d/..."
         )
-        if gsheet_url:
+        if not gsheet_url:
+            if "gsheet_error" in st.session_state:
+                del st.session_state["gsheet_error"]
+        else:
             try:
                 with st.spinner("Downloading Google Sheet..."):
                     df = load_google_sheet(gsheet_url)
                     upload_dfs["Google Sheet"] = df
+                    if "gsheet_error" in st.session_state:
+                        del st.session_state["gsheet_error"]
             except Exception as e:
                 err_str = str(e)
+                st.session_state["gsheet_error"] = err_str
                 if "401" in err_str or "unauthorized" in err_str.lower() or "forbidden" in err_str.lower() or "403" in err_str:
                     st.error("""
                     🔒 **Private Google Sheet detected (HTTP 401/403):**
@@ -197,13 +205,105 @@ with st.sidebar:
         check_live_images = st.checkbox("Live HTTP Image Check", value=False)
 
 # ── Main Content Area ────────────────────────────────────────────────────────
-if not upload_dfs:
-    st.info("👈 Please load your references and primary Upload Sheet in the sidebar control panel to begin.")
-    
-elif not content_file or not zecom_file:
-    st.warning("⚠️ Reference files missing! Please upload both Content File and zEcom File in the sidebar.")
-    
-else:
+# ── Setup Checklist Dashboard ────────────────────────────────────────────────
+content_loaded = content_file is not None
+zecom_loaded = zecom_file is not None
+target_loaded = len(upload_dfs) > 0
+gsheet_error = st.session_state.get("gsheet_error")
+
+# Determine if we should show the setup checklist dashboard
+show_setup_dashboard = not (content_loaded and zecom_loaded and target_loaded)
+
+if show_setup_dashboard:
+    st.markdown("---")
+    st.subheader("🛠️ QC Validation Setup Dashboard")
+    st.markdown("Please configure the required files and parameters in the sidebar to begin. Below is the current configuration status:")
+
+    # Create columns for the checklist cards
+    card_cols = st.columns(3)
+
+    # Card 1: Target Listings Sheet
+    with card_cols[0]:
+        st.markdown("""
+        <div class="metric-card" style="border-top: 4px solid #d946ef; height: 100%;">
+            <div class="metric-title">1. Target Listings Sheet</div>
+        """, unsafe_allow_html=True)
+        
+        if target_loaded:
+            fn_list = list(upload_dfs.keys())
+            fn_str = ", ".join(fn_list)
+            st.markdown(f"**Status**: ✅ Loaded<br><span style='font-size:0.85rem; color:#a7f3d0;'>{fn_str}</span>", unsafe_allow_html=True)
+        elif gsheet_error:
+            st.markdown("**Status**: ❌ Error<br><span style='font-size:0.85rem; color:#fca5a5;'>Failed to download Google Sheet</span>", unsafe_allow_html=True)
+        else:
+            st.markdown("**Status**: ❌ Missing<br><span style='font-size:0.85rem; color:#cbd5e1;'>Upload Target Sheet in sidebar</span>", unsafe_allow_html=True)
+        
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    # Card 2: Required Reference Files
+    with card_cols[1]:
+        st.markdown("""
+        <div class="metric-card" style="border-top: 4px solid #3b82f6; height: 100%;">
+            <div class="metric-title">2. Required References</div>
+        """, unsafe_allow_html=True)
+        
+        # Content File status
+        if content_loaded:
+            st.markdown(f"**Content File**: ✅ Loaded<br><span style='font-size:0.8rem; color:#a7f3d0;'>{content_file.name}</span>", unsafe_allow_html=True)
+        else:
+            st.markdown("**Content File**: ❌ Missing", unsafe_allow_html=True)
+            
+        st.markdown("<div style='margin-top: 8px;'></div>", unsafe_allow_html=True)
+        
+        # zEcom File status
+        if zecom_loaded:
+            st.markdown(f"**zEcom File**: ✅ Loaded<br><span style='font-size:0.8rem; color:#a7f3d0;'>{zecom_file.name}</span>", unsafe_allow_html=True)
+        else:
+            st.markdown("**zEcom File**: ❌ Missing", unsafe_allow_html=True)
+            
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    # Card 3: Marketplace Parameters
+    with card_cols[2]:
+        st.markdown(f"""
+        <div class="metric-card" style="border-top: 4px solid #10b981; height: 100%;">
+            <div class="metric-title">3. Channel & Settings</div>
+            <div><b>Channel</b>: <span style="color:#6ee7b7;">{channel}</span></div>
+            <div style="margin-top: 6px;"><b>Stage</b>: <span style="color:#6ee7b7;">{qc_stage}</span></div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # Detailed Google Sheet error callout in main area if present
+    if gsheet_error:
+        if "401" in gsheet_error or "unauthorized" in gsheet_error.lower() or "forbidden" in gsheet_error.lower() or "403" in gsheet_error:
+            st.error(f"""
+            🔒 **Private Google Sheet detected (HTTP 401/403):**
+            
+            The app does not have permission to fetch this private sheet.
+            
+            **How to resolve this:**
+            1. In your Google Sheet, click the blue **Share** button in the top right.
+            2. Under *General Access*, change it from *Restricted* to **"Anyone with the link can view"** (Viewer access).
+            3. Copy the new link and paste it in the sidebar.
+            
+            *Alternatively:* Go to Google Sheets ➔ **File** ➔ **Download** ➔ **Microsoft Excel (.xlsx)** or **Comma Separated Values (.csv)**, and upload it using the **FILE UPLOAD** mode in the sidebar.
+            
+            **Raw Error:** `{gsheet_error}`
+            """)
+        else:
+            st.error(f"❌ **Error downloading Google Sheet:** {gsheet_error}\n\nPlease verify that the URL is correct and public 'Anyone with the link can view'.")
+
+    # Show a helpful guide in the main area when files are missing
+    if not target_loaded and not gsheet_error:
+        st.info("💡 **Getting Started:** Use the sidebar control panel to upload your listing files. You will need a target listings file and reference content/zEcom files.")
+        
+    if target_loaded and not (content_loaded and zecom_loaded):
+        st.warning("⚠️ **Reference Files Needed:** You have uploaded the target sheet, but you must upload both the **Content File** and **zEcom File** in the sidebar to run validations. Since they are at the top of the sidebar, you may need to **scroll up** in the sidebar to find their file uploaders.")
+
+# ── Main Content Area ────────────────────────────────────────────────────────
+if target_loaded:
     # ── Column Mapping Step ───────────────────────────────────────────────────
     st.subheader("📋 Column Mapping Alignment (Upload Sheet)")
     st.markdown("Align the columns in your uploaded target sheet to the standard QC validation fields:")
@@ -245,41 +345,49 @@ else:
             
     # Process & Validate Button
     st.markdown("<br>", unsafe_allow_html=True)
-    if st.button("🚀 Run QC Validation", type="primary", use_container_width=True):
-        with st.spinner("Loading references and running validations..."):
-            try:
-                content_df = load_content(content_file)
-                zecom_df = load_zecom(zecom_file, country)
-                
-                all_standardized = []
-                for fn, df in upload_dfs.items():
-                    std_df = standardize_dataframe(df, manual_mapping, source_name=fn)
-                    all_standardized.append(std_df)
-                combined_df = pd.concat(all_standardized, ignore_index=True)
-                
-                # Execute validation rules
-                exc_df, val_df, logs = validate_dataframe(
-                    combined_df, 
-                    qc_stage=qc_stage,
-                    channel=channel,
-                    content_df=content_df,
-                    zecom_df=zecom_df,
-                    check_live_images=check_live_images,
-                    allowed_genders=custom_genders,
-                    allowed_statuses=custom_statuses
-                )
-                
-                st.session_state.val_df = val_df
-                st.session_state.exc_df = exc_df
-                st.session_state.logs = logs
-                st.session_state.ran_validation = True
-                
-                st.session_state.ran_comparison = False
-                
-            except Exception as e:
-                st.error(f"Error executing validation run: {e}")
-                import traceback
-                st.error(traceback.format_exc())
+    
+    # Enable button only if reference files are loaded
+    refs_missing = not (content_loaded and zecom_loaded)
+    
+    if refs_missing:
+        st.warning("⚠️ Upload **Content File** and **zEcom File** in the sidebar to unlock the validation button.")
+        st.button("🚀 Run QC Validation", type="primary", use_container_width=True, disabled=True, help="Reference files are required")
+    else:
+        if st.button("🚀 Run QC Validation", type="primary", use_container_width=True):
+            with st.spinner("Loading references and running validations..."):
+                try:
+                    content_df = load_content(content_file)
+                    zecom_df = load_zecom(zecom_file, country)
+                    
+                    all_standardized = []
+                    for fn, df in upload_dfs.items():
+                        std_df = standardize_dataframe(df, manual_mapping, source_name=fn)
+                        all_standardized.append(std_df)
+                    combined_df = pd.concat(all_standardized, ignore_index=True)
+                    
+                    # Execute validation rules
+                    exc_df, val_df, logs = validate_dataframe(
+                        combined_df, 
+                        qc_stage=qc_stage,
+                        channel=channel,
+                        content_df=content_df,
+                        zecom_df=zecom_df,
+                        check_live_images=check_live_images,
+                        allowed_genders=custom_genders,
+                        allowed_statuses=custom_statuses
+                    )
+                    
+                    st.session_state.val_df = val_df
+                    st.session_state.exc_df = exc_df
+                    st.session_state.logs = logs
+                    st.session_state.ran_validation = True
+                    
+                    st.session_state.ran_comparison = False
+                    
+                except Exception as e:
+                    st.error(f"Error executing validation run: {e}")
+                    import traceback
+                    st.error(traceback.format_exc())
 
     # ── Validation Results View ───────────────────────────────────────────────
     if st.session_state.ran_validation:
