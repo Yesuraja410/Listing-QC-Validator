@@ -22,12 +22,6 @@ from utils.file_loaders import (
     CANONICAL_LABELS,
     load_content,
     load_zecom,
-    load_lazada,
-    load_shopee_stock,
-    load_shopee_status,
-    load_zalora_stock,
-    load_zalora_status,
-    load_tiktok,
     _safe_str
 )
 from utils.validators import (
@@ -99,7 +93,7 @@ with st.sidebar:
     qc_stage = st.selectbox(
         "QC Process Stage",
         ["Internal QC", "Post QC"],
-        help="Internal QC validates pre-listing fields. Post QC includes image links and size charts."
+        help="Internal QC validates pre-listing fields. Post QC includes image links, size charts, and live list audits."
     )
     st.session_state.qc_stage = qc_stage
 
@@ -115,77 +109,28 @@ with st.sidebar:
     
     # 2. zEcom File (Mandatory)
     zecom_file = st.file_uploader(
-        "Upload zEcom File (Ecom Status, Launch Date reference)",
+        "Upload zEcom File (Ecom Status, RRP Price reference)",
         type=["xlsx", "xls", "csv"],
         key="ref_zecom"
     )
     
-    # 3. Post QC Channel Marketplace Files
-    live_df = pd.DataFrame()
-    live_loaded = False
+    # 3. Post QC Channel Marketplace Files (Unified to 2 files for all channels)
+    live_file_gen = None
+    live_file_media = None
     
     if qc_stage == "Post QC":
         st.markdown("---")
-        st.markdown(f"### Upload Marketplace Files ({channel})")
-        
-        if platform == "Lazada":
-            laz_file = st.file_uploader("Lazada Live listings report", type=["xlsx", "xls", "csv"], key="live_laz")
-            if laz_file:
-                live_df = load_lazada(laz_file, country)
-                live_loaded = not live_df.empty
-                
-        elif platform == "Shopee":
-            sh_stock_file = st.file_uploader("Shopee Stock report (ZIP/Excel)", type=["xlsx", "xls", "csv", "zip"], key="live_sh_stk")
-            sh_status_file = st.file_uploader("Shopee Status/Basic Info report", type=["xlsx", "xls", "csv", "zip"], key="live_sh_sts")
-            if sh_stock_file:
-                sh_stock = load_shopee_stock(sh_stock_file, country)
-                sh_status = load_shopee_status(sh_status_file, country)
-                
-                if not sh_stock.empty:
-                    shopee = sh_stock.copy()
-                    active_pids = set()
-                    if not sh_status.empty and "Product ID" in sh_status.columns:
-                        active_pids = set(
-                            sh_status["Product ID"]
-                            .apply(_safe_str)
-                            .str.strip()
-                            .replace("", pd.NA)
-                            .dropna()
-                            .unique()
-                        )
-                    
-                    if "Product ID" in shopee.columns:
-                        if active_pids and len(active_pids & set(shopee["Product ID"].apply(_safe_str).str.strip())) > 0:
-                            shopee["MP Status"] = shopee["Product ID"].apply(
-                                lambda x: "Active" if _safe_str(x).strip() in active_pids else "Inactive"
-                            )
-                        else:
-                            shopee["MP Status"] = shopee["Product ID"].apply(
-                                lambda x: "Active" if _safe_str(x).strip() not in ("", "nan", "none") else "Inactive"
-                            )
-                    else:
-                        shopee["MP Status"] = "Inactive"
-                    live_df = shopee
-                    live_loaded = True
-                    
-        elif platform == "Zalora":
-            z_stock_file = st.file_uploader("Zalora Stock file", type=["xlsx", "xls", "csv"], key="live_z_stk")
-            z_status_file = st.file_uploader("Zalora Status file", type=["xlsx", "xls", "csv"], key="live_z_sts")
-            if z_stock_file:
-                z_stock = load_zalora_stock(z_stock_file, country)
-                z_status = load_zalora_status(z_status_file, country)
-                if not z_stock.empty and not z_status.empty and "SKU" in z_stock.columns and "SKU" in z_status.columns:
-                    live_df = pd.merge(z_stock, z_status[["SKU", "MP Status"]], on="SKU", how="left")
-                else:
-                    live_df = z_stock
-                live_loaded = not live_df.empty
-                
-        elif platform == "TikTok":
-            tt_act = st.file_uploader("TikTok Active listings stock file", type=["xlsx", "xls", "csv"], key="live_tt_act")
-            tt_inact = st.file_uploader("TikTok Inactive listings stock file", type=["xlsx", "xls", "csv"], key="live_tt_inact")
-            if tt_act or tt_inact:
-                live_df = load_tiktok(tt_act, tt_inact)
-                live_loaded = not live_df.empty
+        st.markdown("### Upload Live Marketplace Files")
+        live_file_gen = st.file_uploader(
+            "1. Upload Live Listings (General QC Check: Status, Price, Stock)",
+            type=["xlsx", "xls", "csv", "zip"],
+            key="live_gen"
+        )
+        live_file_media = st.file_uploader(
+            "2. Upload Live Listings (Media Check: Images & Size Chart)",
+            type=["xlsx", "xls", "csv", "zip"],
+            key="live_media"
+        )
 
     st.markdown("---")
     st.markdown("### Upload Target Listings Sheet")
@@ -235,9 +180,7 @@ with st.sidebar:
         )
         custom_statuses = [s.strip().lower() for s in custom_statuses_str.split(",") if s.strip()]
         
-        check_live_images = False
-        if qc_stage == "Post QC":
-            check_live_images = st.checkbox("Live HTTP Image Check", value=False)
+        check_live_images = st.checkbox("Live HTTP Image Check", value=False)
 
 # ── Main Content Area ────────────────────────────────────────────────────────
 if not upload_dfs:
@@ -291,18 +234,16 @@ else:
     if st.button("🚀 Run QC Validation", type="primary", use_container_width=True):
         with st.spinner("Loading references and running validations..."):
             try:
-                # 1. Parse Reference DataFrames
                 content_df = load_content(content_file)
                 zecom_df = load_zecom(zecom_file, country)
                 
-                # 2. Standardize target sheets
                 all_standardized = []
                 for fn, df in upload_dfs.items():
                     std_df = standardize_dataframe(df, manual_mapping, source_name=fn)
                     all_standardized.append(std_df)
                 combined_df = pd.concat(all_standardized, ignore_index=True)
                 
-                # 3. Execute validation rules
+                # Execute validation rules
                 exc_df, val_df, logs = validate_dataframe(
                     combined_df, 
                     qc_stage=qc_stage,
@@ -314,7 +255,6 @@ else:
                     allowed_statuses=custom_statuses
                 )
                 
-                # Store in session state
                 st.session_state.val_df = val_df
                 st.session_state.exc_df = exc_df
                 st.session_state.logs = logs
@@ -363,8 +303,6 @@ else:
             tabs.insert(2, "🔄 Live Listing Sync Audit")
             
         tab_list = st.tabs(tabs)
-        
-        # Mapping tabs to views
         tab_dashboard = tab_list[0]
         tab_exceptions = tab_list[1]
         
@@ -408,7 +346,6 @@ else:
                 preview_df = preview_df.rename(columns=disp_mapping)
                 cols_to_disp = ["Source", "Row", "Status", "Errors", "Warnings", "Article No", "SKU (EAN)", "Product Name", "price", "quantity"]
                 cols_to_disp = [c for c in cols_to_disp if c in preview_df.columns]
-                
                 st.dataframe(preview_df[cols_to_disp].head(500), use_container_width=True, hide_index=True)
                 
             st.markdown("#### 📥 Download Validation Reports")
@@ -458,30 +395,128 @@ else:
         if tab_live_compare is not None:
             with tab_live_compare:
                 st.markdown("#### 🔄 Live Store Listing Sync Audit")
-                st.markdown(f"Compare your uploaded listing sheet against live listings for **{channel}**.")
+                st.markdown(f"Compare your uploaded listing sheet against live store data.")
                 
-                if not live_loaded:
-                    st.info(f"💡 Please upload the live listings file in the sidebar under **Upload Marketplace Files ({channel})** to compare.")
+                if not live_file_gen and not live_file_media:
+                    st.info("💡 Please upload at least one Live listings file (General or Media Check) in the sidebar to run the sync audit.")
                 else:
-                    st.success(f"✅ Live listing file loaded containing {len(live_df)} records.")
+                    # ── Live Files Column Mapping and Loading ──
+                    live_general_df = pd.DataFrame()
+                    live_media_df = pd.DataFrame()
                     
+                    if live_file_gen:
+                        try:
+                            live_general_df_raw = load_file_to_df(live_file_gen)
+                            st.success(f"✅ Loaded General Live file ({len(live_general_df_raw)} records)")
+                            
+                            # Auto-map General
+                            live_gen_cols = live_general_df_raw.columns.tolist()
+                            live_gen_maps = auto_map_columns(live_gen_cols)
+                            
+                            with st.expander("Align Live General File Columns"):
+                                l_cols = st.columns(3)
+                                live_gen_mapping = {}
+                                
+                                # We only need sku, status, price, quantity, product_name for general check
+                                gen_fields = ["sku", "ecommerce_status", "price", "quantity", "product_name"]
+                                for i, canonical in enumerate(gen_fields):
+                                    l_col_sel = l_cols[i % 3]
+                                    l_default_val = live_gen_maps.get(canonical)
+                                    l_options = ["-- Skip --"] + live_gen_cols
+                                    l_default_idx = 0
+                                    if l_default_val in live_gen_cols:
+                                        l_default_idx = l_options.index(l_default_val)
+                                    with l_col_sel:
+                                        l_mapped_col = st.selectbox(
+                                            f"Live {CANONICAL_LABELS[canonical]}",
+                                            options=l_options,
+                                            index=l_default_idx,
+                                            key=f"live_gen_map_{canonical}"
+                                        )
+                                        live_gen_mapping[canonical] = None if l_mapped_col == "-- Skip --" else l_mapped_col
+                                        
+                            live_general_df = standardize_dataframe(live_general_df_raw, live_gen_mapping, source_name="Live General")
+                        except Exception as e:
+                            st.error(f"Failed to load Live General file: {e}")
+                            
+                    if live_file_media:
+                        try:
+                            live_media_df_raw = load_file_to_df(live_file_media)
+                            st.success(f"✅ Loaded Images & Size Chart Live file ({len(live_media_df_raw)} records)")
+                            
+                            # Auto-map Media
+                            live_med_cols = live_media_df_raw.columns.tolist()
+                            live_med_maps = auto_map_columns(live_med_cols)
+                            
+                            with st.expander("Align Live Media File Columns"):
+                                l_cols = st.columns(3)
+                                live_med_mapping = {}
+                                
+                                # We only need sku, images, size_chart for media check
+                                med_fields = ["sku", "images", "size_chart"]
+                                for i, canonical in enumerate(med_fields):
+                                    l_col_sel = l_cols[i % 3]
+                                    l_default_val = live_med_maps.get(canonical)
+                                    l_options = ["-- Skip --"] + live_med_cols
+                                    l_default_idx = 0
+                                    if l_default_val in live_med_cols:
+                                        l_default_idx = l_options.index(l_default_val)
+                                    with l_col_sel:
+                                        l_mapped_col = st.selectbox(
+                                            f"Live {CANONICAL_LABELS[canonical]}",
+                                            options=l_options,
+                                            index=l_default_idx,
+                                            key=f"live_med_map_{canonical}"
+                                        )
+                                        live_med_mapping[canonical] = None if l_mapped_col == "-- Skip --" else l_mapped_col
+                                        
+                            live_media_df = standardize_dataframe(live_media_df_raw, live_med_mapping, source_name="Live Media")
+                        except Exception as e:
+                            st.error(f"Failed to load Live Media file: {e}")
+                            
+                    # Trigger Comparison
                     if st.button("🔄 Execute Comparison Audit", type="primary", key="btn_run_compare"):
-                        with st.spinner("Running comparison logic..."):
-                            # Standardize source data from the active validation run
-                            standardized_source = val_df.copy()
-                            
-                            # Standardize live data
-                            # Note: live_df already loaded with correct keys (SKU, MP Stock, MP Status, MP Price)
-                            # Match key is SKU
-                            comp_df, comp_metrics = compare_source_and_live(
-                                standardized_source,
-                                live_df,
-                                match_column="sku"
-                            )
-                            
-                            st.session_state.comp_df = comp_df
-                            st.session_state.comp_metrics = comp_metrics
-                            st.session_state.ran_comparison = True
+                        with st.spinner("Consolidating live sheets and running comparison..."):
+                            try:
+                                # Consolidate Live DataFrames:
+                                # Standard outer merge on sku
+                                if not live_general_df.empty and not live_media_df.empty:
+                                    # Merge on sku
+                                    # Since both standardized dfs contain sku, _original_row_number, and _source_file,
+                                    # we drop tracking columns from media_df before merging to avoid duplicate columns
+                                    media_clean = live_media_df.drop(columns=["_original_row_number", "_source_file"])
+                                    # Ensure sku columns are strings and cleaned
+                                    live_general_df["sku"] = live_general_df["sku"].astype(str).str.strip()
+                                    media_clean["sku"] = media_clean["sku"].astype(str).str.strip()
+                                    
+                                    consolidated_live = pd.merge(
+                                        live_general_df, 
+                                        media_clean, 
+                                        on="sku", 
+                                        how="outer"
+                                    )
+                                elif not live_general_df.empty:
+                                    consolidated_live = live_general_df
+                                else:
+                                    consolidated_live = live_media_df
+                                    
+                                # Standardize source data from the active validation run
+                                standardized_source = val_df.copy()
+                                
+                                # Run comparison
+                                comp_df, comp_metrics = compare_source_and_live(
+                                    standardized_source,
+                                    consolidated_live,
+                                    match_column="sku"
+                                )
+                                
+                                st.session_state.comp_df = comp_df
+                                st.session_state.comp_metrics = comp_metrics
+                                st.session_state.ran_comparison = True
+                            except Exception as e:
+                                st.error(f"Comparison run failed: {e}")
+                                import traceback
+                                st.error(traceback.format_exc())
                             
                     if st.session_state.ran_comparison:
                         st.markdown("---")
@@ -493,7 +528,7 @@ else:
                         c_kpis = st.columns(5)
                         labels = list(comp_metrics.keys())
                         vals = list(comp_metrics.values())
-                        theme_colors = ["#38bdf8", "#34d399", "#f87171", "#fbbf24", "#a78bfa"]
+                        theme_colors = ["#00c5c8", "#34d399", "#f87171", "#fbbf24", "#a78bfa"]
                         
                         for idx in range(len(labels)):
                             with c_kpis[idx]:
