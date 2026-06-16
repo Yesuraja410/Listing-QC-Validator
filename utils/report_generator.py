@@ -29,10 +29,13 @@ def generate_qc_excel_report(val_df: pd.DataFrame, exc_df: pd.DataFrame, qc_stag
         "product_name": "Product Name",
         "Gender Check": "Gender Check",
         "color_name": "Color Name",
+        "ref_color_name": "Reference Color Name",
         "Color Check": "Color Check",
         "size": "Size",
+        "ref_size": "Reference Size",
         "Size Check": "Size Check",
         "price": "RRP",
+        "ref_rrp": "Reference RRP",
         "RRP Check": "RRP Check",
         "quantity": "Quantity"
     }
