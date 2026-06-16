@@ -573,12 +573,10 @@ def validate_dataframe(
     logs.append(f"Validation Stage: {qc_stage} | Target Channel: {channel}")
     logs.append(f"Dataset contains {len(df)} records.")
     
-    with st.spinner("Indexing Content Reference mappings..."):
-        content_maps = build_content_maps(content_df)
-        logs.append("Content File size mappings built successfully.")
-    with st.spinner("Indexing zEcom Reference mappings..."):
-        zecom_maps = build_zecom_maps(zecom_df, channel)
-        logs.append(f"zEcom File status and RRP price mappings built successfully.")
+    content_maps = build_content_maps(content_df)
+    logs.append("Content File size mappings built successfully.")
+    zecom_maps = build_zecom_maps(zecom_df, channel)
+    logs.append(f"zEcom File status and RRP price mappings built successfully.")
         
     all_exceptions = []
     
