@@ -708,6 +708,9 @@ def validate_dataframe(
     color_check_col = []
     size_check_col = []
     rrp_check_col = []
+    ref_color_name_col = []
+    ref_size_col = []
+    ref_rrp_col = []
     
     # Group by SKU and Size (after applying corrections) to find duplicates
     duplicate_skus_sizes = set()
@@ -832,6 +835,51 @@ def validate_dataframe(
         size_check_col.append("; ".join(size_msgs) if size_msgs else "OK")
         rrp_check_col.append("; ".join(rrp_msgs) if rrp_msgs else "OK")
         
+        # Determine Reference values for display
+        ref_color_val = ""
+        ref_size_val = ""
+        ref_rrp_val = ""
+        
+        if content_maps:
+            sku_to_article, sku_to_uksize, sku_to_ussize, sku_to_russize, sku_to_gender, sku_to_colorname, \
+                article_to_uksizes, article_to_ussizes, article_to_russizes = content_maps
+            
+            if sku_val in sku_to_colorname:
+                ref_color_val = sku_to_colorname[sku_val]
+                
+            if sku_val in sku_to_article:
+                if channel == "Lazada PH" and is_footwear(row.get("product_name", "")):
+                    ref_size_val = sku_to_ussize.get(sku_val, "")
+                elif channel in ["Zalora SG", "Zalora MY", "Zalora PH"] and is_kids_apparel(row.get("gender", ""), row.get("product_name", "")):
+                    ref_size_val = sku_to_russize.get(sku_val, "")
+                else:
+                    ref_size_val = sku_to_uksize.get(sku_val, "")
+                
+                if not ref_size_val:
+                    ref_size_val = sku_to_uksize.get(sku_val, "")
+            else:
+                if norm_art:
+                    valid_sizes = set()
+                    if channel == "Lazada PH" and is_footwear(row.get("product_name", "")):
+                        valid_sizes = article_to_ussizes.get(norm_art, set())
+                    elif channel in ["Zalora SG", "Zalora MY", "Zalora PH"] and is_kids_apparel(row.get("gender", ""), row.get("product_name", "")):
+                        valid_sizes = article_to_russizes.get(norm_art, set())
+                    else:
+                        valid_sizes = article_to_uksizes.get(norm_art, set())
+                    if not valid_sizes:
+                        valid_sizes = article_to_uksizes.get(norm_art, set())
+                    if valid_sizes:
+                        ref_size_val = ", ".join(sorted(list(valid_sizes)))
+                        
+        if zecom_maps and norm_art:
+            _, _, article_to_rrpprice = zecom_maps
+            if article_to_rrpprice and norm_art in article_to_rrpprice:
+                ref_rrp_val = article_to_rrpprice[norm_art]
+                
+        ref_color_name_col.append(ref_color_val)
+        ref_size_col.append(ref_size_val)
+        ref_rrp_col.append(ref_rrp_val)
+        
     val_df = df.copy()
     val_df["_qc_status"] = status_col
     val_df["_qc_errors"] = errors_col
@@ -840,8 +888,11 @@ def validate_dataframe(
     
     val_df["Zeocm Status"] = zecom_status_col
     val_df["Gender Check"] = gender_check_col
+    val_df["ref_color_name"] = ref_color_name_col
     val_df["Color Check"] = color_check_col
+    val_df["ref_size"] = ref_size_col
     val_df["Size Check"] = size_check_col
+    val_df["ref_rrp"] = ref_rrp_col
     val_df["RRP Check"] = rrp_check_col
     
     if all_exceptions:
