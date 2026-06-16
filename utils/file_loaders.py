@@ -803,20 +803,33 @@ def load_zecom(file, country="PH"):
         "zalora":  "Ecom_Zalora",
         "tiktok":  "Ecom_TikTok",
     }
-    for col in df.columns:
-        if col in ("Article No", "Launch Date", "Future Launch", "rrp_price"):
-            continue
-        col_l = col.lower()
-        for mp_key, ecom_name in mp_keywords.items():
-            if mp_key in col_l and ecom_name not in df.columns:
-                df[ecom_name] = df.apply(
-                    lambda row, c=col: _ecom_status_from_val(
-                        row[c], row["Future Launch"]
-                    ),
-                    axis=1,
-                )
+    for mp_key, ecom_name in mp_keywords.items():
+        target_col = None
+        # First try: platform name + country name
+        for col in df.columns:
+            if col in ("Article No", "Launch Date", "Future Launch", "rrp_price"):
+                continue
+            col_l = col.lower()
+            if mp_key in col_l and country.lower() in col_l:
+                target_col = col
                 break
-
+        # Second try: platform name only
+        if not target_col:
+            for col in df.columns:
+                if col in ("Article No", "Launch Date", "Future Launch", "rrp_price"):
+                    continue
+                col_l = col.lower()
+                if mp_key in col_l:
+                    target_col = col
+                    break
+        if target_col:
+            df[ecom_name] = df.apply(
+                lambda row, c=target_col: _ecom_status_from_val(
+                    row[c], row["Future Launch"]
+                ),
+                axis=1,
+            )
+            
     return df
 
 # ── Auto column mapping functions ─────────────────────────────────────────────
