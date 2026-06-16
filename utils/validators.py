@@ -115,6 +115,18 @@ def correct_size(sz: str) -> str:
         return SIZE_CORRECTIONS[s_low]
     return s
 
+def clean_size_for_comparison(sz: str) -> str:
+    s = str(sz).strip().lower()
+    # Remove common prefixes like 'uk:', 'us:', 'int:', 'uk', 'us', 'int'
+    s = re.sub(r'^(?:uk|us|int)[:\s\-]*', '', s)
+    # Remove 'yrs-y', 'yrs', 'yr', 'y' (especially if preceded by digit)
+    # e.g. '8 yrs-y' -> '8', '8y' -> '8'
+    s = re.sub(r'[\s\-]*yrs?[\s\-]*y?', '', s)
+    s = re.sub(r'(\d+)[\s\-]*y\b', r'\1', s)
+    s = re.sub(r'\byrs?\b', '', s)
+    s = s.strip()
+    return s
+
 def is_footwear(product_name: str) -> bool:
     """Classifies footwear products based on title keywords."""
     name_low = str(product_name).lower()
@@ -458,12 +470,14 @@ def validate_row_internal(
                     if ref_gender_local:
                         gender_low = ref_gender_local.lower().strip()
                         gender_syns = {
-                            "men": ["men", "mens", "male", "gentleman", "gentlemen"],
-                            "women": ["women", "womens", "female", "lady", "ladies", "woman"],
-                            "unisex": ["unisex", "men", "women", "mens", "womens", "adult", "unisexual"],
+                            "men": ["men", "mens", "male", "gentleman", "gentlemen", "boy", "boys"],
+                            "male": ["men", "mens", "male", "gentleman", "gentlemen", "boy", "boys"],
+                            "women": ["women", "womens", "female", "lady", "ladies", "woman", "girl", "girls"],
+                            "female": ["women", "womens", "female", "lady", "ladies", "woman", "girl", "girls"],
+                            "unisex": ["unisex", "men", "women", "mens", "womens", "adult", "unisexual", "male", "female"],
                             "kids": ["kids", "boys", "girls", "kid", "boy", "girl", "child", "children", "youth", "toddler"],
-                            "boys": ["boys", "boy", "kids", "kid", "child", "children", "youth"],
-                            "girls": ["girls", "girl", "kids", "kid", "child", "children", "youth"]
+                            "boys": ["boys", "boy", "kids", "kid", "child", "children", "youth", "men", "mens", "male"],
+                            "girls": ["girls", "girl", "kids", "kid", "child", "children", "youth", "women", "womens", "female"]
                         }
                         syns = gender_syns.get(gender_low, [gender_low])
                         prod_name_low = prod_name.lower()
@@ -510,7 +524,7 @@ def validate_row_internal(
                         valid_sizes_for_art = article_to_uksizes.get(norm_art, set())
                         
                     if ref_size:
-                        if size.strip().lower() != ref_size.strip().lower():
+                        if clean_size_for_comparison(size) != clean_size_for_comparison(ref_size):
                             add_exc("Size", raw_size, "Error", f"Size mismatch: Size '{raw_size}' (Normalized: '{size}') does not match reference {size_type} '{ref_size}' in Content File for SKU '{sku_val}'.")
                     else:
                         add_exc("Size", raw_size, "Warning", f"No {size_type} mapped in Content File for SKU '{sku_val}'.")
@@ -534,7 +548,7 @@ def validate_row_internal(
                         valid_sizes = article_to_uksizes.get(norm_art, set())
                         size_type = "UK size (Fallback)"
                         
-                    if valid_sizes and size.strip().lower() not in valid_sizes:
+                    if valid_sizes and clean_size_for_comparison(size) not in [clean_size_for_comparison(vs) for vs in valid_sizes]:
                         add_exc("Size", raw_size, "Error", f"Size mismatch: Size '{raw_size}' (Normalized: '{size}') is not in the list of valid {size_type}s ({', '.join(sorted(list(valid_sizes)))}) in Content File for Article No '{art_num}'.")
         else:
             # Check size by Article No alone if SKU is missing
@@ -555,7 +569,7 @@ def validate_row_internal(
                     valid_sizes = article_to_uksizes.get(norm_art, set())
                     size_type = "UK size (Fallback)"
                     
-                if valid_sizes and size.strip().lower() not in valid_sizes:
+                if valid_sizes and clean_size_for_comparison(size) not in [clean_size_for_comparison(vs) for vs in valid_sizes]:
                     add_exc("Size", raw_size, "Error", f"Size mismatch: Size '{raw_size}' (Normalized: '{size}') is not in the list of valid {size_type}s ({', '.join(sorted(list(valid_sizes)))}) in Content File for Article No '{art_num}'.")
 
     return exceptions
