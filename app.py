@@ -452,21 +452,32 @@ if target_loaded:
             with db_col2:
                 st.markdown("#### Validated Dataset Preview")
                 preview_df = val_df.copy()
-                disp_mapping = {
-                    "_original_row_number": "Row",
-                    "_source_file": "Source",
-                    "_qc_status": "Status",
-                    "_qc_errors": "Errors",
-                    "_qc_warnings": "Warnings",
+                target_headers = {
+                    "sku": "Seller SKU",
                     "article_number": "Article No",
-                    "sku": "SKU (EAN)",
-                    "ecommerce_status": "Ecom Status",
-                    "product_name": "Product Name"
+                    "Zeocm Status": "Zeocm Status",
+                    "launch_date": "Launch Date",
+                    "gender": "Gender",
+                    "product_name": "Product Name",
+                    "Gender Check": "Gender Check",
+                    "color_name": "Color Name",
+                    "ref_color_name": "Reference Color Name",
+                    "Color Check": "Color Check",
+                    "size": "Size",
+                    "ref_size": "Reference Size",
+                    "Size Check": "Size Check",
+                    "price": "RRP",
+                    "ref_rrp": "Reference RRP",
+                    "RRP Check": "RRP Check",
+                    "quantity": "Quantity"
                 }
-                preview_df = preview_df.rename(columns=disp_mapping)
-                cols_to_disp = ["Source", "Row", "Status", "Errors", "Warnings", "Article No", "SKU (EAN)", "Product Name", "price", "quantity"]
-                cols_to_disp = [c for c in cols_to_disp if c in preview_df.columns]
-                st.dataframe(preview_df[cols_to_disp].head(500), use_container_width=True, hide_index=True)
+                for col in target_headers.keys():
+                    if col not in preview_df.columns:
+                        preview_df[col] = ""
+                ordered_cols = list(target_headers.keys())
+                preview_df = preview_df[ordered_cols]
+                preview_df = preview_df.rename(columns=target_headers)
+                st.dataframe(preview_df.head(500), use_container_width=True, hide_index=True)
                 
             st.markdown("#### 📥 Download Validation Reports")
             excel_data = generate_qc_excel_report(val_df, exc_df, qc_stage)
