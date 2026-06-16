@@ -39,15 +39,15 @@ class TestValidators(unittest.TestCase):
             {
                 "Article No": "404620_07",
                 "Launch Date": pd.to_datetime("2026-06-20"),
-                "Ecom_Shopee": "Active",
-                "Ecom_Lazada": "Inactive",
+                "Ecom_Shopee": "Yes",
+                "Ecom_Lazada": "No",
                 "rrp_price": "89.99"
             },
             {
                 "Article No": "531103_03",
                 "Launch Date": pd.to_datetime("2026-06-15"),
-                "Ecom_Shopee": "Inactive",
-                "Ecom_Lazada": "Active",
+                "Ecom_Shopee": "No",
+                "Ecom_Lazada": "Yes",
                 "rrp_price": "49.99"
             }
         ])
@@ -179,6 +179,24 @@ class TestValidators(unittest.TestCase):
         )
         tiktok_excs2 = [e for e in excs2 if "TikTok Listing" in e["Message"]]
         self.assertEqual(len(tiktok_excs2), 0)
+
+    def test_gender_compatibility(self):
+        from validators import genders_are_compatible
+        self.assertTrue(genders_are_compatible("Female", "Women"))
+        self.assertTrue(genders_are_compatible("women", "female"))
+        self.assertTrue(genders_are_compatible("Male", "Men"))
+        self.assertTrue(genders_are_compatible("men", "male"))
+        self.assertFalse(genders_are_compatible("Male", "Female"))
+
+    def test_size_ignoring_prefixes_suffixes(self):
+        from validators import clean_size_for_comparison
+        self.assertEqual(clean_size_for_comparison("Int: S"), "s")
+        self.assertEqual(clean_size_for_comparison("UK: 8"), "8")
+        self.assertEqual(clean_size_for_comparison("US: 10"), "10")
+        self.assertEqual(clean_size_for_comparison("8 yrs-Y"), "8")
+        self.assertEqual(clean_size_for_comparison("8 yrs-y"), "8")
+        self.assertEqual(clean_size_for_comparison("8 yrs"), "8")
+        self.assertEqual(clean_size_for_comparison("8y"), "8")
 
 if __name__ == '__main__':
     unittest.main()
