@@ -3,6 +3,7 @@ import re
 import zipfile
 import urllib.parse
 import pandas as pd
+import numpy as np
 import streamlit as st
 
 # Synonyms for auto-mapping columns
