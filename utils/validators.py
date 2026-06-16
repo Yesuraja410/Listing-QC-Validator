@@ -117,6 +117,9 @@ def correct_size(sz: str) -> str:
 
 def clean_size_for_comparison(sz: str) -> str:
     s = str(sz).strip().lower()
+    # Normalize size corrections (e.g. 2xl -> xxl, 3xl -> xxxl) before doing comparison
+    if s in SIZE_CORRECTIONS:
+        s = SIZE_CORRECTIONS[s].lower()
     # Remove prefixes like 'uk:', 'us:', 'int:' case-insensitively, anywhere at the start
     s = re.sub(r'^(?:uk|us|int|uk:|us:|int:)[:\s\-]*', '', s)
     # Remove 'yrs-y', 'yrs-y', 'yrs', 'yr', 'y' variations at the end
