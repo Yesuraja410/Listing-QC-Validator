@@ -43,6 +43,10 @@ MALAY_KEYWORDS = [
 def _safe_str(val):
     if val is None:
         return ""
+    if isinstance(val, (pd.Series, np.ndarray)):
+        if len(val) == 0:
+            return ""
+        val = val.iloc[0] if hasattr(val, "iloc") else val[0]
     try:
         if pd.isna(val):
             return ""
@@ -55,6 +59,10 @@ def _clean_sku(val):
     if re.fullmatch(r'\d+\.0', s):
         s = s[:-2]
     return s
+
+def _normalise_cols(df):
+    df.columns = [_safe_str(c) for c in df.columns]
+    return df
 
 def _normalise_article_no(val):
     s = _safe_str(val)
@@ -74,12 +82,27 @@ def _normalise_status(status):
     return _safe_str(status)
 
 def is_empty(val) -> bool:
-    if pd.isna(val) or val is None:
+    if val is None:
         return True
+    if isinstance(val, (pd.Series, np.ndarray)):
+        if len(val) == 0:
+            return True
+        val = val.iloc[0] if hasattr(val, "iloc") else val[0]
+    try:
+        if pd.isna(val):
+            return True
+    except Exception:
+        pass
     val_str = str(val).strip()
     return val_str == "" or val_str.lower() in ["nan", "null", "<na>", "none"]
 
 def clean_str(val) -> str:
+    if val is None:
+        return ""
+    if isinstance(val, (pd.Series, np.ndarray)):
+        if len(val) == 0:
+            return ""
+        val = val.iloc[0] if hasattr(val, "iloc") else val[0]
     if is_empty(val):
         return ""
     return str(val).strip()
