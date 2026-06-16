@@ -647,7 +647,7 @@ def load_content(file):
         df = df.rename(columns={"EAN": "SKU"})
         
     # Map Article Number (Color_No, ALU)
-    art_col = next((c for c in df.columns if c.lower() in ["color_no", "alu", "article no", "article number", "articleno"]), None)
+    art_col = next((c for c in df.columns if c.lower() in ["color_no", "color no", "alu", "article no", "article number", "articleno"]), None)
     if art_col:
         df = df.rename(columns={art_col: "Article No"})
     else:
@@ -803,14 +803,22 @@ def load_zecom(file, country="PH"):
         "zalora":  "Ecom_Zalora",
         "tiktok":  "Ecom_TikTok",
     }
+    def _clean_string(s):
+        if not s:
+            return ""
+        return re.sub(r'[^a-z0-9]', '', str(s).lower())
+
     for mp_key, ecom_name in mp_keywords.items():
         target_col = None
+        mp_key_clean = _clean_string(mp_key)
+        country_clean = _clean_string(country)
+        
         # First try: platform name + country name
         for col in df.columns:
             if col in ("Article No", "Launch Date", "Future Launch", "rrp_price"):
                 continue
-            col_l = col.lower()
-            if mp_key in col_l and country.lower() in col_l:
+            col_clean = _clean_string(col)
+            if mp_key_clean in col_clean and country_clean in col_clean:
                 target_col = col
                 break
         # Second try: platform name only
@@ -818,8 +826,8 @@ def load_zecom(file, country="PH"):
             for col in df.columns:
                 if col in ("Article No", "Launch Date", "Future Launch", "rrp_price"):
                     continue
-                col_l = col.lower()
-                if mp_key in col_l:
+                col_clean = _clean_string(col)
+                if mp_key_clean in col_clean:
                     target_col = col
                     break
         if target_col:
