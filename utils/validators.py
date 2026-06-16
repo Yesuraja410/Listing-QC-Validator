@@ -130,15 +130,16 @@ def is_kids_apparel(gender: str, product_name: str) -> bool:
 
 # ── Reference Mappings Builders ───────────────────────────────────────────────
 
-def build_content_maps(content_df: pd.DataFrame) -> Tuple[Dict, Dict, Dict, Dict, Dict, Dict, Dict, Dict]:
+def build_content_maps(content_df: pd.DataFrame) -> Tuple[Dict, Dict, Dict, Dict, Dict, Dict, Dict, Dict, Dict]:
     """
-    Builds lookup tables from Content File for UK, US, and Russian size mappings.
+    Builds lookup tables from Content File for UK, US, Russian size and color name mappings.
     """
     sku_to_article = {}
     sku_to_uksize = {}
     sku_to_ussize = {}
     sku_to_russize = {}
     sku_to_gender = {}
+    sku_to_colorname = {}
     
     article_to_uksizes = {}
     article_to_ussizes = {}
@@ -150,7 +151,8 @@ def build_content_maps(content_df: pd.DataFrame) -> Tuple[Dict, Dict, Dict, Dict
         has_uk = "uk_size" in content_df.columns
         has_us = "us_size" in content_df.columns
         has_rus = "rus_size" in content_df.columns
-        gender_col = next((c for c in content_df.columns if c.lower() in ["gender", "sex"]), None)
+        has_gender = "content_gender" in content_df.columns
+        has_color = "content_color_name" in content_df.columns
         
         for _, r in content_df.iterrows():
             sku_val = _clean_sku(r.get("SKU")) if has_sku else ""
@@ -158,6 +160,8 @@ def build_content_maps(content_df: pd.DataFrame) -> Tuple[Dict, Dict, Dict, Dict
             uk_val = _safe_str(r.get("uk_size")).strip() if has_uk else ""
             us_val = _safe_str(r.get("us_size")).strip() if has_us else ""
             rus_val = _safe_str(r.get("rus_size")).strip() if has_rus else ""
+            gender_val = _safe_str(r.get("content_gender")).strip() if has_gender else ""
+            color_val = _safe_str(r.get("content_color_name")).strip() if has_color else ""
             
             if sku_val:
                 if art_val:
@@ -168,8 +172,10 @@ def build_content_maps(content_df: pd.DataFrame) -> Tuple[Dict, Dict, Dict, Dict
                     sku_to_ussize[sku_val] = us_val
                 if rus_val:
                     sku_to_russize[sku_val] = rus_val
-                if gender_col:
-                    sku_to_gender[sku_val] = _safe_str(r.get(gender_col)).strip()
+                if gender_val:
+                    sku_to_gender[sku_val] = gender_val
+                if color_val:
+                    sku_to_colorname[sku_val] = color_val
                     
             if art_val:
                 if art_val not in article_to_uksizes:
@@ -187,7 +193,7 @@ def build_content_maps(content_df: pd.DataFrame) -> Tuple[Dict, Dict, Dict, Dict
                     article_to_russizes[art_val].add(rus_val.lower())
                 
     return (
-        sku_to_article, sku_to_uksize, sku_to_ussize, sku_to_russize, sku_to_gender,
+        sku_to_article, sku_to_uksize, sku_to_ussize, sku_to_russize, sku_to_gender, sku_to_colorname,
         article_to_uksizes, article_to_ussizes, article_to_russizes
     )
 
@@ -261,7 +267,7 @@ def validate_row_internal(
     raw_size = clean_str(row.get("size", ""))
     size = correct_size(raw_size)
     
-    sku_to_article, sku_to_uksize, sku_to_ussize, sku_to_russize, sku_to_gender, \
+    sku_to_article, sku_to_uksize, sku_to_ussize, sku_to_russize, sku_to_gender, sku_to_colorname, \
         article_to_uksizes, article_to_ussizes, article_to_russizes = content_maps
         
     article_to_launchdate, article_to_ecomstatus, article_to_rrpprice = zecom_maps
@@ -398,6 +404,42 @@ def validate_row_internal(
                 if norm_art and norm_art != ref_art:
                     add_exc("Article Number", art_num, "Error", f"Article mismatch: Uploaded Article No '{art_num}' does not match Content File Article No '{ref_art}' for SKU '{sku_val}'.")
                 
+                # Check Article Number in Product Name
+                if ref_art.lower() not in prod_name.lower():
+                    add_exc("Product Name", prod_name, "Error", f"Product Name mismatch: Product Name does not contain Article Number '{ref_art}' from Content File.")
+                    
+                # Check Gender in Product Name
+                if sku_to_gender and sku_val in sku_to_gender:
+                    ref_gender = sku_to_gender[sku_val]
+                    if ref_gender:
+                        gender_low = ref_gender.lower().strip()
+                        gender_syns = {
+                            "men": ["men", "mens", "male", "gentleman", "gentlemen"],
+                            "women": ["women", "womens", "female", "lady", "ladies", "woman"],
+                            "unisex": ["unisex", "men", "women", "mens", "womens", "adult", "unisexual"],
+                            "kids": ["kids", "boys", "girls", "kid", "boy", "girl", "child", "children", "youth", "toddler"],
+                            "boys": ["boys", "boy", "kids", "kid", "child", "children", "youth"],
+                            "girls": ["girls", "girl", "kids", "kid", "child", "children", "youth"]
+                        }
+                        syns = gender_syns.get(gender_low, [gender_low])
+                        prod_name_low = prod_name.lower()
+                        if not any(re.search(r'\b' + re.escape(syn) + r'\b', prod_name_low) for syn in syns) and not any(syn in prod_name_low for syn in syns):
+                            add_exc("Product Name", prod_name, "Warning", f"Product Name mismatch: Product Name does not contain reference to gender '{ref_gender}' or its synonyms.")
+
+                # Check Color Name matching (Shopee 20-character limit check)
+                if sku_to_colorname and sku_val in sku_to_colorname:
+                    ref_color = sku_to_colorname[sku_val]
+                    if ref_color:
+                        color_name = clean_str(row.get("color_name", ""))
+                        if "shopee" in channel.lower():
+                            if len(color_name) > 20:
+                                add_exc("Color Name", color_name, "Warning", f"Color Name '{color_name}' exceeds Shopee's 20-character limit.")
+                            if color_name.strip().lower() != ref_color[:20].strip().lower():
+                                add_exc("Color Name", color_name, "Error", f"Color Name mismatch: Uploaded Color Name '{color_name}' does not match Content File Color Name '{ref_color}' (Shopee 20-char limit applied: '{ref_color[:20]}').")
+                        else:
+                            if color_name.strip().lower() != ref_color.strip().lower():
+                                add_exc("Color Name", color_name, "Error", f"Color Name mismatch: Uploaded Color Name '{color_name}' does not match Content File Color Name '{ref_color}'.")
+
                 # Size Checkup dynamic logic: US size / Rus size / UK size
                 if size:
                     # Choose size reference based on Channel & Footwear / Apparel classification
@@ -466,21 +508,37 @@ def validate_row_internal(
             if norm_art in article_to_ecomstatus:
                 ref_ecom_status = article_to_ecomstatus[norm_art]
                 norm_up_status = _normalise_status(ecom_status)
+                
+                # Check that Ecom Status in zEcom is Yes/Active
+                if ref_ecom_status != "Active":
+                    add_exc("E-commerce Status", ecom_status, "Error", f"Listing blocked: zEcom File status for this channel is '{ref_ecom_status}' (Should be Active/Yes).")
+                
                 if norm_up_status != ref_ecom_status:
                     add_exc("E-commerce Status", ecom_status, "Error", f"Status mismatch: Uploaded status is '{ecom_status}' but zEcom File defines it as '{ref_ecom_status}' for Article No '{art_num}'.")
                 
-                # Launch Date Match
-                if parsed_date and norm_art in article_to_launchdate:
+                # Launch Date checks
+                ref_ld = None
+                if norm_art in article_to_launchdate:
                     ref_ld_str = article_to_launchdate[norm_art]
                     if ref_ld_str:
                         try:
                             ref_ld = pd.to_datetime(ref_ld_str).date()
-                            if isinstance(parsed_date, datetime.datetime):
-                                parsed_date = parsed_date.date()
-                            if parsed_date != ref_ld:
-                                add_exc("Launch Date", launch_date_raw, "Warning", f"Launch Date mismatch: Uploaded '{launch_date_raw}' does not match zEcom File Launch Date '{ref_ld_str}'.")
+                            # Error if zEcom launch date is in the future
+                            if ref_ld > datetime.date.today():
+                                add_exc("Launch Date", ref_ld_str, "Error", f"Future Launch Date: zEcom File defines launch date as '{ref_ld_str}' (future). Product cannot be listed yet.")
                         except Exception:
                             pass
+                            
+                if parsed_date:
+                    if isinstance(parsed_date, datetime.datetime):
+                        parsed_date = parsed_date.date()
+                    # Error if uploaded launch date is in the future
+                    if parsed_date > datetime.date.today():
+                        add_exc("Launch Date", launch_date_raw, "Error", f"Future Launch Date: Uploaded launch date '{launch_date_raw}' is in the future.")
+                        
+                    # Match check with zEcom launch date
+                    if ref_ld and parsed_date != ref_ld:
+                        add_exc("Launch Date", launch_date_raw, "Warning", f"Launch Date mismatch: Uploaded '{launch_date_raw}' does not match zEcom File Launch Date '{ref_ld_str}'.")
                             
                 # zEcom RRP Price validation
                 if price_raw and norm_art in article_to_rrpprice:
