@@ -652,6 +652,7 @@ def validate_dataframe(
     """
     Validates a whole standardized DataFrame with UK, US, Russian size and zEcom RRP rules.
     """
+    df = df.copy()
     logs = []
     logs.append(f"Starting validation run at {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logs.append(f"Validation Stage: {qc_stage} | Target Channel: {channel}")
@@ -661,6 +662,8 @@ def validate_dataframe(
     logs.append("Content File size mappings built successfully.")
     zecom_maps = build_zecom_maps(zecom_df, channel)
     logs.append(f"zEcom File status and RRP price mappings built successfully.")
+    
+    sku_to_article = content_maps[0] if content_maps else None
         
     all_exceptions = []
     
@@ -668,6 +671,12 @@ def validate_dataframe(
     warnings_col = []
     status_col = []
     details_col = []
+    
+    zecom_status_col = []
+    gender_check_col = []
+    color_check_col = []
+    size_check_col = []
+    rrp_check_col = []
     
     # Group by SKU and Size (after applying corrections) to find duplicates
     duplicate_skus_sizes = set()
@@ -686,6 +695,18 @@ def validate_dataframe(
     logs.append(f"Found {len(duplicate_skus_sizes)} duplicate sku+size combinations in upload sheet.")
 
     for idx, row in df.iterrows():
+        sku_val = _clean_sku(row.get("sku", ""))
+        art_num = clean_str(row.get("article_number", ""))
+        
+        # If Article Number is empty, try to resolve it from Content File SKU lookup
+        if not art_num and sku_to_article and sku_val in sku_to_article:
+            resolved_art = sku_to_article[sku_val]
+            df.loc[idx, "article_number"] = resolved_art
+            # Update row Series for this iteration
+            row = row.copy()
+            row["article_number"] = resolved_art
+            art_num = resolved_art
+
         if qc_stage == "Internal QC":
             row_exceptions = validate_row_internal(row, idx, channel, content_maps, zecom_maps, allowed_genders, allowed_statuses)
         else:
@@ -723,11 +744,54 @@ def validate_dataframe(
         details_col.append("; ".join([f"{e['Field']}: {e['Message']}" for e in row_exceptions]))
         all_exceptions.extend(row_exceptions)
         
+        # ── Populate Check Columns ──
+        norm_art = _normalise_article_no(art_num)
+        
+        # zEcom Status lookup
+        ref_ecom_status = "Not Found"
+        if zecom_maps:
+            article_to_launchdate, article_to_ecomstatus, article_to_rrpprice = zecom_maps
+            if article_to_ecomstatus and norm_art:
+                ref_ecom_status = article_to_ecomstatus.get(norm_art, "Not Found")
+        zecom_status_col.append(ref_ecom_status)
+        
+        # Filter row exceptions for checks
+        gender_msgs = []
+        color_msgs = []
+        size_msgs = []
+        rrp_msgs = []
+        
+        for exc in row_exceptions:
+            field = exc.get("Field", "")
+            msg = exc.get("Message", "")
+            
+            if field == "Gender":
+                gender_msgs.append(msg)
+            elif field == "Product Name" and "gender" in msg.lower():
+                gender_msgs.append(msg)
+            elif field == "Color Name":
+                color_msgs.append(msg)
+            elif field == "Size":
+                size_msgs.append(msg)
+            elif field == "Price":
+                rrp_msgs.append(msg)
+                
+        gender_check_col.append("; ".join(gender_msgs) if gender_msgs else "OK")
+        color_check_col.append("; ".join(color_msgs) if color_msgs else "OK")
+        size_check_col.append("; ".join(size_msgs) if size_msgs else "OK")
+        rrp_check_col.append("; ".join(rrp_msgs) if rrp_msgs else "OK")
+        
     val_df = df.copy()
     val_df["_qc_status"] = status_col
     val_df["_qc_errors"] = errors_col
     val_df["_qc_warnings"] = warnings_col
     val_df["_qc_details"] = details_col
+    
+    val_df["Zeocm Status"] = zecom_status_col
+    val_df["Gender Check"] = gender_check_col
+    val_df["Color Check"] = color_check_col
+    val_df["Size Check"] = size_check_col
+    val_df["RRP Check"] = rrp_check_col
     
     if all_exceptions:
         exc_df = pd.DataFrame(all_exceptions)
