@@ -731,9 +731,26 @@ def load_zecom(file, country="PH"):
         else:
             try:
                 import python_calamine
-                raw_df = pd.read_excel(io.BytesIO(raw), header=None, dtype=str, engine="calamine")
+                xl = pd.ExcelFile(io.BytesIO(raw), engine="calamine")
             except ImportError:
-                raw_df = pd.read_excel(io.BytesIO(raw), header=None, dtype=str)
+                xl = pd.ExcelFile(io.BytesIO(raw))
+            
+            sheet_names = xl.sheet_names
+            target_sheet = sheet_names[0]
+            
+            country_lower = country.lower().strip()
+            for s_name in sheet_names:
+                s_name_lower = s_name.lower().strip()
+                if country_lower == "my" and ("my" in s_name_lower or "malaysia" in s_name_lower):
+                    target_sheet = s_name
+                    break
+                elif country_lower == "sg" and ("sg" in s_name_lower or "singapore" in s_name_lower):
+                    target_sheet = s_name
+                    break
+                elif country_lower == "ph" and ("ph" in s_name_lower or "phil" in s_name_lower):
+                    target_sheet = s_name
+                    break
+            raw_df = xl.parse(target_sheet, header=None, dtype=str)
     except Exception:
         return pd.DataFrame()
 
