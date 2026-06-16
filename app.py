@@ -85,7 +85,6 @@ with st.sidebar:
     )
     st.session_state.channel = channel
     
-    # Extract country (SG, MY, PH) and platform (Lazada, Shopee, Zalora, TikTok)
     channel_parts = channel.split()
     platform = channel_parts[0]
     country = channel_parts[1]
@@ -114,7 +113,7 @@ with st.sidebar:
         key="ref_zecom"
     )
     
-    # 3. Post QC Channel Marketplace Files (Unified to 2 files for all channels)
+    # 3. Post QC Channel Marketplace Files
     live_file_gen = None
     live_file_media = None
     
@@ -165,7 +164,22 @@ with st.sidebar:
                     df = load_google_sheet(gsheet_url)
                     upload_dfs["Google Sheet"] = df
             except Exception as e:
-                st.error(f"Failed to fetch sheet: {e}. Check if view permissions are open.")
+                err_str = str(e)
+                if "401" in err_str or "unauthorized" in err_str.lower() or "forbidden" in err_str.lower() or "403" in err_str:
+                    st.error("""
+                    🔒 **Private Google Sheet detected (HTTP 401/403):**
+                    
+                    The app does not have permission to fetch this private sheet.
+                    
+                    **To resolve this:**
+                    1. In your Google Sheet, click the blue **Share** button in the top right.
+                    2. Under *General Access*, change it from *Restricted* to **"Anyone with the link can view"** (Viewer access).
+                    3. Copy the new link and paste it here.
+                    
+                    *Alternatively:* Go to Google Sheets ➔ **File** ➔ **Download** ➔ **Microsoft Excel (.xlsx)** or **Comma Separated Values (.csv)**, and upload it using the **FILE UPLOAD** mode above.
+                    """)
+                else:
+                    st.error(f"Failed to fetch sheet: {e}. Check if sharing settings are set to public 'Anyone with the link'.")
 
     with st.expander("Genders & Statuses Config"):
         custom_genders_str = st.text_input(
@@ -260,7 +274,6 @@ else:
                 st.session_state.logs = logs
                 st.session_state.ran_validation = True
                 
-                # Reset comparison state for new run
                 st.session_state.ran_comparison = False
                 
             except Exception as e:
@@ -298,7 +311,6 @@ else:
             "📜 Execution Logs"
         ]
         
-        # Add Comparison tab if in Post QC stage
         if qc_stage == "Post QC":
             tabs.insert(2, "🔄 Live Listing Sync Audit")
             
@@ -400,7 +412,6 @@ else:
                 if not live_file_gen and not live_file_media:
                     st.info("💡 Please upload at least one Live listings file (General or Media Check) in the sidebar to run the sync audit.")
                 else:
-                    # ── Live Files Column Mapping and Loading ──
                     live_general_df = pd.DataFrame()
                     live_media_df = pd.DataFrame()
                     
@@ -409,7 +420,6 @@ else:
                             live_general_df_raw = load_file_to_df(live_file_gen)
                             st.success(f"✅ Loaded General Live file ({len(live_general_df_raw)} records)")
                             
-                            # Auto-map General
                             live_gen_cols = live_general_df_raw.columns.tolist()
                             live_gen_maps = auto_map_columns(live_gen_cols)
                             
@@ -417,7 +427,6 @@ else:
                                 l_cols = st.columns(3)
                                 live_gen_mapping = {}
                                 
-                                # We only need sku, status, price, quantity, product_name for general check
                                 gen_fields = ["sku", "ecommerce_status", "price", "quantity", "product_name"]
                                 for i, canonical in enumerate(gen_fields):
                                     l_col_sel = l_cols[i % 3]
@@ -444,7 +453,6 @@ else:
                             live_media_df_raw = load_file_to_df(live_file_media)
                             st.success(f"✅ Loaded Images & Size Chart Live file ({len(live_media_df_raw)} records)")
                             
-                            # Auto-map Media
                             live_med_cols = live_media_df_raw.columns.tolist()
                             live_med_maps = auto_map_columns(live_med_cols)
                             
@@ -452,7 +460,6 @@ else:
                                 l_cols = st.columns(3)
                                 live_med_mapping = {}
                                 
-                                # We only need sku, images, size_chart for media check
                                 med_fields = ["sku", "images", "size_chart"]
                                 for i, canonical in enumerate(med_fields):
                                     l_col_sel = l_cols[i % 3]
@@ -474,18 +481,11 @@ else:
                         except Exception as e:
                             st.error(f"Failed to load Live Media file: {e}")
                             
-                    # Trigger Comparison
                     if st.button("🔄 Execute Comparison Audit", type="primary", key="btn_run_compare"):
                         with st.spinner("Consolidating live sheets and running comparison..."):
                             try:
-                                # Consolidate Live DataFrames:
-                                # Standard outer merge on sku
                                 if not live_general_df.empty and not live_media_df.empty:
-                                    # Merge on sku
-                                    # Since both standardized dfs contain sku, _original_row_number, and _source_file,
-                                    # we drop tracking columns from media_df before merging to avoid duplicate columns
                                     media_clean = live_media_df.drop(columns=["_original_row_number", "_source_file"])
-                                    # Ensure sku columns are strings and cleaned
                                     live_general_df["sku"] = live_general_df["sku"].astype(str).str.strip()
                                     media_clean["sku"] = media_clean["sku"].astype(str).str.strip()
                                     
@@ -500,10 +500,8 @@ else:
                                 else:
                                     consolidated_live = live_media_df
                                     
-                                # Standardize source data from the active validation run
                                 standardized_source = val_df.copy()
                                 
-                                # Run comparison
                                 comp_df, comp_metrics = compare_source_and_live(
                                     standardized_source,
                                     consolidated_live,
