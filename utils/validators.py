@@ -211,7 +211,10 @@ def build_zecom_maps(zecom_df: pd.DataFrame, channel: str) -> Tuple[Dict, Dict, 
     
     if zecom_df is not None and not zecom_df.empty:
         platform = channel.split()[0].lower()
-        ecom_col = f"Ecom_{platform.capitalize()}"
+        if platform == "tiktok":
+            ecom_col = "Ecom_TikTok"
+        else:
+            ecom_col = f"Ecom_{platform.capitalize()}"
         
         has_art = "Article No" in zecom_df.columns
         has_launch = "Launch Date" in zecom_df.columns
