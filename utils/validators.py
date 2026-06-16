@@ -6,8 +6,8 @@ import requests
 from typing import Dict, List, Tuple
 
 # Default allowed values
-ALLOWED_GENDERS = ["men", "women", "unisex", "kids", "boys", "girls"]
-ALLOWED_STATUSES = ["active", "inactive", "draft", "delisted", "suspended", "live", "on", "off"]
+ALLOWED_GENDERS = ["men", "women", "unisex", "kids", "boys", "girls", "male", "female"]
+ALLOWED_STATUSES = ["active", "inactive", "draft", "delisted", "suspended", "live", "on", "off", "yes", "no"]
 
 URL_REGEX = re.compile(
     r'^(?:http|ftp)s?://' 
@@ -75,10 +75,10 @@ def _normalise_article_no(val):
 
 def _normalise_status(status):
     s = _safe_str(status).lower()
-    if s in ("active", "1", "enabled", "yes", "y", "live", "listed"):
-        return "Active"
-    if s in ("inactive", "0", "disabled", "no", "n", "delisted", "unlisted", "deleted", "removed"):
-        return "Inactive"
+    if s in ("active", "1", "enabled", "yes", "y", "live", "listed", "on"):
+        return "Yes"
+    if s in ("inactive", "0", "disabled", "no", "n", "delisted", "unlisted", "deleted", "removed", "off"):
+        return "No"
     return _safe_str(status)
 
 def is_empty(val) -> bool:
@@ -117,13 +117,11 @@ def correct_size(sz: str) -> str:
 
 def clean_size_for_comparison(sz: str) -> str:
     s = str(sz).strip().lower()
-    # Remove common prefixes like 'uk:', 'us:', 'int:', 'uk', 'us', 'int'
-    s = re.sub(r'^(?:uk|us|int)[:\s\-]*', '', s)
-    # Remove 'yrs-y', 'yrs', 'yr', 'y' (especially if preceded by digit)
-    # e.g. '8 yrs-y' -> '8', '8y' -> '8'
-    s = re.sub(r'[\s\-]*yrs?[\s\-]*y?', '', s)
-    s = re.sub(r'(\d+)[\s\-]*y\b', r'\1', s)
-    s = re.sub(r'\byrs?\b', '', s)
+    # Remove prefixes like 'uk:', 'us:', 'int:' case-insensitively, anywhere at the start
+    s = re.sub(r'^(?:uk|us|int|uk:|us:|int:)[:\s\-]*', '', s)
+    # Remove 'yrs-y', 'yrs-y', 'yrs', 'yr', 'y' variations at the end
+    s = re.sub(r'[\s\-]*yrs?\-?y?\b', '', s)
+    s = re.sub(r'[\s\-]*y\b', '', s)
     s = s.strip()
     return s
 
@@ -139,6 +137,22 @@ def is_kids_apparel(gender: str, product_name: str) -> bool:
     is_kid = g_low in ["kids", "boys", "girls"]
     # Apparel is anything that is NOT footwear
     return is_kid and not is_footwear(product_name)
+
+def genders_are_compatible(g1: str, g2: str) -> bool:
+    """Checks if two genders are compatible (e.g. Female and Women, Male and Men)."""
+    g1_low = str(g1).strip().lower()
+    g2_low = str(g2).strip().lower()
+    if g1_low == g2_low:
+        return True
+    
+    male_group = {"men", "mens", "male", "boy", "boys"}
+    female_group = {"women", "womens", "female", "girl", "girls"}
+    
+    if g1_low in male_group and g2_low in male_group:
+        return True
+    if g1_low in female_group and g2_low in female_group:
+        return True
+    return False
 
 # ── Reference Mappings Builders ───────────────────────────────────────────────
 
@@ -317,13 +331,13 @@ def validate_row_internal(
     
     if ref_ecom_status == "Not Found":
         add_exc("Article Number", art_num, "Error", f"Article No '{art_num}' not found in zEcom File lookup.")
-    elif ref_ecom_status not in ["Active", "Yes", "Y", "Active (No Future launch)"]:
-        add_exc("E-commerce Status", ref_ecom_status, "Error", f"Listing blocked: zEcom File status for this channel is '{ref_ecom_status}' (Should be Yes/Active).")
+    elif _normalise_status(ref_ecom_status) != "Yes":
+        add_exc("E-commerce Status", ref_ecom_status, "Error", f"Listing blocked: zEcom File status for this channel is '{ref_ecom_status}' (Should be Yes).")
 
     # If status is mapped in sheet, compare it
     if pd.notna(row.get("ecommerce_status")) and not is_empty(row.get("ecommerce_status")):
         norm_up_status = _normalise_status(ecom_status)
-        if ref_ecom_status != "Not Found" and norm_up_status != ref_ecom_status:
+        if ref_ecom_status != "Not Found" and norm_up_status != _normalise_status(ref_ecom_status):
             add_exc("E-commerce Status", ecom_status, "Error", f"Status mismatch: Uploaded status is '{ecom_status}' but zEcom File defines it as '{ref_ecom_status}' for Article No '{art_num}'.")
 
     # 4. Launch Date zEcom Check
@@ -375,7 +389,7 @@ def validate_row_internal(
     if pd.notna(row.get("gender")) and not is_empty(row.get("gender")):
         if gender.lower() not in [g.lower() for g in allowed_genders]:
             add_exc("Gender", gender, "Error", f"Gender '{gender}' is invalid. Allowed: {', '.join(allowed_genders)}.")
-        elif ref_gender and gender.strip().lower() != ref_gender.strip().lower():
+        elif ref_gender and not genders_are_compatible(gender, ref_gender):
             add_exc("Gender", gender, "Warning", f"Gender mismatch: Uploaded gender '{gender}' does not match Content File gender '{ref_gender}' for SKU '{sku_val}'.")
 
     # Product Name vs Gender Keyword Check using ref_gender (or uploaded gender as fallback)
