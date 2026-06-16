@@ -700,12 +700,9 @@ def load_zecom(file, country="PH"):
     name = file.name.lower()
     file.seek(0)
 
-    article_col_by_country = {
-        "PH": ["PIM Article#", "PIM Article #", "Article No", "ArticleNo"],
-        "MY": ["Style#", "STYLE#", "style#", "Article No", "PIM Article#"],
-        "SG": ["STYLE#", "Style#", "style#", "Article No", "PIM Article#"],
-    }
-    preferred_article_cols = article_col_by_country.get(country, ["Article No"])
+    preferred_article_cols = [
+        "PIM Article#", "PIM Article #", "Style#", "STYLE#", "style#", "Article No", "ArticleNo"
+    ]
     preferred_rows = [2, 1, 0, 3] if country == "PH" else [3, 2, 1, 0]
 
     try:
