@@ -142,7 +142,6 @@ def _read_file(file, header_row=0, skiprows=None):
     if file is None:
         return pd.DataFrame()
     
-    # Handle file-like object vs string path
     if isinstance(file, str):
         filename = file
         with open(file, 'rb') as f:
@@ -165,7 +164,6 @@ def _read_file(file, header_row=0, skiprows=None):
         return pd.DataFrame()
 
 def load_file_to_df(file_or_path, filename: str = None) -> pd.DataFrame:
-    """Standard loader for Upload Sheets."""
     return _read_file(file_or_path)
 
 def load_google_sheet(url: str) -> pd.DataFrame:
@@ -197,7 +195,6 @@ def _read_zip(file, header_row=0, skiprows=None):
 
 # ── 10 Channel Specific Reading Methods ───────────────────────────────────────
 
-# ── Lazada Loader
 def load_lazada(file, country):
     if file is None:
         return pd.DataFrame()
@@ -223,7 +220,6 @@ def load_lazada(file, country):
         df["MP Price"] = pd.to_numeric(df["MP Price"].apply(_safe_str), errors="coerce").fillna(0.0)
     return df
 
-# ── Shopee Loader helpers
 def _find_sku_col(df):
     for c in ["SKU", "Variation SKU", "Parent SKU", "Seller SKU", "SellerSKU", "ParentSKU", "VariationSKU"]:
         if c in df.columns:
@@ -310,8 +306,6 @@ def _load_shopee_raw(file):
     if file is None:
         return pd.DataFrame()
     name = file.name.lower()
-    
-    # Read raw bytes
     raw = file.read()
     file.seek(0)
     
@@ -335,7 +329,6 @@ def _load_shopee_raw(file):
     else:
         return _parse_shopee_single(raw, name)
 
-# ── Shopee Stock Loader
 def load_shopee_stock(file, country):
     df = _load_shopee_raw(file)
     if df.empty:
@@ -403,7 +396,6 @@ def load_shopee_stock(file, country):
 
     return df
 
-# ── Shopee Status Loader
 def load_shopee_status(file, country):
     df = _load_shopee_raw(file)
     if df.empty:
@@ -456,7 +448,6 @@ def load_shopee_status(file, country):
     df["Marketplace"] = "Shopee " + country
     return df.reset_index(drop=True)
 
-# ── Zalora Stock Loader
 def load_zalora_stock(file, country):
     if file is None:
         return pd.DataFrame()
@@ -507,7 +498,6 @@ def load_zalora_stock(file, country):
         df["MP Price"] = pd.to_numeric(df["MP Price"].apply(_safe_str), errors="coerce").fillna(0.0)
     return df
 
-# ── Zalora Status Loader
 def load_zalora_status(file, country):
     if file is None:
         return pd.DataFrame()
@@ -553,7 +543,6 @@ def load_zalora_status(file, country):
     df["Marketplace"] = "Zalora " + country
     return df[df["SKU"] != ""].copy()
 
-# ── TikTok Loader helpers
 def _load_tiktok_raw(file):
     if file is None:
         return pd.DataFrame()
@@ -623,7 +612,6 @@ def _load_tiktok_file(file, status_label):
     out["Marketplace"] = "TikTok MY"
     return out[out["SKU"] != ""].copy()
 
-# ── TikTok Loader
 def load_tiktok(active_file, inactive_file):
     active   = _load_tiktok_file(active_file,   "Active")
     inactive = _load_tiktok_file(inactive_file, "Inactive")
@@ -637,7 +625,7 @@ def load_tiktok(active_file, inactive_file):
     combined = combined.drop_duplicates(subset=["SKU"], keep="first")
     return combined.reset_index(drop=True)
 
-# ── Content File Loader (preserves size columns & UK size mapping)
+# ── Content File Loader (maps EAN to SKU and extracts multiple size columns)
 def load_content(file):
     if file is None:
         return pd.DataFrame()
@@ -663,28 +651,19 @@ def load_content(file):
         df = df.rename(columns={art_col: "Article No"})
         
     # Auto-detect UK Size column
-    uk_size_col = None
-    for c in df.columns:
-        cl = c.lower()
-        if "uk" in cl and "size" in cl:
-            uk_size_col = c
-            break
-    if uk_size_col is None:
-        for c in df.columns:
-            if "uk" in c.lower():
-                uk_size_col = c
-                break
-    if uk_size_col is None:
-        # Fallback to standard Size column in Content file
-        for c in ["Size", "size", "Size Code", "SizeCode"]:
-            if c in df.columns:
-                uk_size_col = c
-                break
-                
-    if uk_size_col and uk_size_col != "uk_size":
-        df["uk_size"] = df[uk_size_col].apply(_safe_str)
-    else:
-        df["uk_size"] = ""
+    uk_col = next((c for c in df.columns if "uk" in c.lower() and "size" in c.lower()), 
+                  next((c for c in df.columns if "uk" in c.lower()), None))
+    df["uk_size"] = df[uk_col].apply(_safe_str) if uk_col else ""
+    
+    # Auto-detect US Size column
+    us_col = next((c for c in df.columns if "us" in c.lower() and "size" in c.lower()), 
+                  next((c for c in df.columns if "us" in c.lower()), None))
+    df["us_size"] = df[us_col].apply(_safe_str) if us_col else ""
+    
+    # Auto-detect Russian Size column
+    rus_col = next((c for c in df.columns if ("rus" in c.lower() or "russian" in c.lower()) and "size" in c.lower()), 
+                   next((c for c in df.columns if "rus" in c.lower() or "russian" in c.lower()), None))
+    df["rus_size"] = df[rus_col].apply(_safe_str) if rus_col else ""
 
     if "SKU" in df.columns:
         df["SKU"] = df["SKU"].apply(_clean_sku)
@@ -693,7 +672,7 @@ def load_content(file):
         
     return df
 
-# ── zEcom Loader (extracts launch dates and ecom statuses)
+# ── zEcom Loader (extracts launch dates, ecom statuses, and RRP Price)
 def load_zecom(file, country="PH"):
     if file is None:
         return pd.DataFrame()
@@ -772,6 +751,13 @@ def load_zecom(file, country="PH"):
         df = df[df["Article No"].apply(_safe_str) != ""].copy()
         df = df.reset_index(drop=True)
 
+    # Auto-detect RRP Price column
+    rrp_col = next((c for c in df.columns if "rrp" in c.lower() or ("retail" in c.lower() and "price" in c.lower())), None)
+    if rrp_col:
+        df["rrp_price"] = df[rrp_col].apply(_safe_str)
+    else:
+        df["rrp_price"] = ""
+
     launch_col = None
     for c in ["Launch Dates", "Launch Date", "LaunchDate", "Launch"]:
         if c in df.columns:
@@ -794,7 +780,6 @@ def load_zecom(file, country="PH"):
     else:
         df["Future Launch"] = False
 
-    # Standardized Ecom Columns matching: Ecom_Lazada, Ecom_Shopee, Ecom_Zalora, Ecom_TikTok
     mp_keywords = {
         "lazada":  "Ecom_Lazada",
         "shopee":  "Ecom_Shopee",
@@ -802,7 +787,7 @@ def load_zecom(file, country="PH"):
         "tiktok":  "Ecom_TikTok",
     }
     for col in df.columns:
-        if col in ("Article No", "Launch Date", "Future Launch"):
+        if col in ("Article No", "Launch Date", "Future Launch", "rrp_price"):
             continue
         col_l = col.lower()
         for mp_key, ecom_name in mp_keywords.items():
