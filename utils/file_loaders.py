@@ -32,11 +32,12 @@ COLUMN_SYNONYMS = {
     ],
     "color_name": [
         "color name", "color_name", "color", "colour", "color_no", 
-        "color number", "color_description", "color description"
+        "color number", "color_description", "color description",
+        "variation 1", "variation1", "variation_1"
     ],
     "size": [
         "size", "size_code", "size code", "sizing", "product size", 
-        "size_name", "size name"
+        "size_name", "size name", "variation 2", "variation2", "variation_2"
     ],
     "quantity": [
         "quantity", "qty", "stock", "inventory", "quantity available", 
@@ -44,7 +45,7 @@ COLUMN_SYNONYMS = {
     ],
     "price": [
         "price", "retail price", "selling price", "amount", "msrp", 
-        "price list", "unit price", "selling_price", "retail_price"
+        "price list", "unit price", "selling_price", "retail_price", "rrp"
     ],
     "images": [
         "images", "image", "image url", "image_url", "image urls", 
@@ -173,7 +174,7 @@ def load_file_to_df(file_or_path, filename: str = None) -> pd.DataFrame:
 
 def load_google_sheet(url: str) -> pd.DataFrame:
     csv_url = parse_google_sheets_url(url)
-    return pd.read_csv(csv_url, dtype=str)
+    return pd.read_csv(csv_url, skiprows=[0, 2], dtype=str)
 
 def _read_zip(file, header_row=0, skiprows=None):
     raw = file.read()
@@ -630,7 +631,6 @@ def load_tiktok(active_file, inactive_file):
     combined = combined.drop_duplicates(subset=["SKU"], keep="first")
     return combined.reset_index(drop=True)
 
-# ── Content File Loader (maps EAN to SKU and extracts multiple size columns)
 def load_content(file):
     if file is None:
         return pd.DataFrame()
@@ -639,25 +639,40 @@ def load_content(file):
         return pd.DataFrame()
     df = _normalise_cols(df)
     
-    if "EAN" in df.columns and "SKU" not in df.columns:
+    # Map SKU / EAN
+    ean_col = next((c for c in df.columns if c.lower() in ["sku as ean", "ean", "sku", "sku_ean"]), None)
+    if ean_col:
+        df = df.rename(columns={ean_col: "SKU"})
+    elif "EAN" in df.columns and "SKU" not in df.columns:
         df = df.rename(columns={"EAN": "SKU"})
         
-    art_col = None
-    for c in ["Article No", "Color_No", "Color_No.1", "ArticleNo", "Article Number"]:
-        if c in df.columns:
-            art_col = c
-            break
-    if art_col is None:
-        for c in df.columns:
-            if "article" in c.lower() or "color" in c.lower():
-                art_col = c
-                break
-    if art_col and art_col != "Article No":
+    # Map Article Number (Color_No, ALU)
+    art_col = next((c for c in df.columns if c.lower() in ["color_no", "alu", "article no", "article number", "articleno"]), None)
+    if art_col:
         df = df.rename(columns={art_col: "Article No"})
+    else:
+        # Fallback loop
+        for c in df.columns:
+            if "article" in c.lower() or "color_no" in c.lower() or "color no" in c.lower() or "alu" in c.lower():
+                df = df.rename(columns={c: "Article No"})
+                break
+                
+    # Map Color Name
+    color_name_col = next((c for c in df.columns if c.lower() in ["color name", "colorname", "color_name", "colour name", "colour_name"]), None)
+    if color_name_col:
+        df = df.rename(columns={color_name_col: "content_color_name"})
+        
+    # Map Gender
+    gender_col = next((c for c in df.columns if c.lower() in ["gender", "genders", "sex"]), None)
+    if gender_col:
+        df = df.rename(columns={gender_col: "content_gender"})
         
     # Auto-detect UK Size column
     uk_col = next((c for c in df.columns if "uk" in c.lower() and "size" in c.lower()), 
                   next((c for c in df.columns if "uk" in c.lower()), None))
+    if not uk_col:
+        # Fallback to general "size" column if present and not already mapped as US or Rus
+        uk_col = next((c for c in df.columns if c.lower() == "size"), None)
     df["uk_size"] = df[uk_col].apply(_safe_str) if uk_col else ""
     
     # Auto-detect US Size column
