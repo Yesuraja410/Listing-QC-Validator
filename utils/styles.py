@@ -10,53 +10,25 @@ def inject_css():
         font-family: 'Plus Jakarta Sans', sans-serif !important;
     }
 
-    /* Force Sleek Charcoal Background on all Streamlit containers */
+    /* Force Light Slate/Blue Background on all Streamlit main containers */
     .stApp, 
     [data-testid="stAppViewContainer"], 
     [data-testid="stMainViewContainer"],
     [data-testid="stMain"],
     [data-testid="stHeader"] {
-        background-color: #12131a !important;
+        background-color: #f1f5f9 !important;
         background-image: none !important;
-        color: #e2e8f0 !important;
+        color: #1e293b !important;
     }
 
-    /* Force Sidebar Background */
+    /* Force Sidebar Background - Pure White with right border */
     [data-testid="stSidebar"], 
     [data-testid="stSidebar"] > div {
-        background-color: #0b0c10 !important;
-        border-right: 1px solid rgba(6, 182, 212, 0.15) !important;
+        background-color: #ffffff !important;
+        border-right: 1px solid #e2e8f0 !important;
     }
 
-    /* Premium Header Container - Crisp Charcoal Card with Cyan glow */
-    .header-container {
-        padding: 2rem;
-        background-color: #1a1b24 !important;
-        border: 1px solid rgba(6, 182, 212, 0.25) !important;
-        border-radius: 16px;
-        box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.8), 0 0 15px rgba(6, 182, 212, 0.05);
-        margin-bottom: 2rem;
-    }
-    
-    /* Crisp White Title */
-    .main-title {
-        font-size: 2.8rem;
-        font-weight: 800;
-        color: #ffffff !important;
-        letter-spacing: -0.02em;
-        margin-bottom: 0.5rem;
-        text-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
-    }
-    
-    /* Muted Silver Subtitle */
-    .sub-title {
-        font-size: 1.05rem;
-        font-weight: 400;
-        color: #94a3b8 !important;
-        letter-spacing: 0.01em;
-    }
-
-    /* Sidebar Headings and Labels - Electric Cyan */
+    /* Sidebar Headings and Labels - Dark Slate */
     [data-testid="stSidebar"] label,
     [data-testid="stSidebar"] .stSelectbox label,
     [data-testid="stSidebar"] .stFileUploader label,
@@ -65,202 +37,240 @@ def inject_css():
     [data-testid="stSidebar"] h1,
     [data-testid="stSidebar"] h2,
     [data-testid="stSidebar"] h3 {
-        color: #06b6d4 !important; /* Electric Teal */
+        color: #334155 !important;
         font-size: 0.85rem !important;
         font-weight: 700 !important;
-        letter-spacing: 0.06em !important;
+        letter-spacing: 0.05em !important;
         text-transform: uppercase !important;
         margin-bottom: 6px !important;
     }
 
-    /* KPI Cards Container styling - Slate/Charcoal base */
-    .metric-card {
-        background-color: #1a1b24 !important;
-        border: 1px solid rgba(255, 255, 255, 0.04) !important;
+    /* Premium Header Container - Pure White Card with gray border and shadow */
+    .header-container {
+        padding: 2rem;
+        background-color: #ffffff !important;
+        border: 1px solid #e2e8f0 !important;
         border-radius: 12px;
-        padding: 1.4rem;
-        box-shadow: 0 8px 20px -5px rgba(0, 0, 0, 0.6);
-        transition: all 0.25s ease-in-out;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
+        margin-bottom: 2rem;
+    }
+    
+    /* Bold Charcoal Title */
+    .main-title {
+        font-size: 2.5rem;
+        font-weight: 800;
+        color: #0f172a !important; /* Dark Slate */
+        letter-spacing: -0.02em;
+        margin-bottom: 0.5rem;
+    }
+    
+    /* Muted Slate Subtitle */
+    .sub-title {
+        font-size: 1rem;
+        font-weight: 400;
+        color: #64748b !important; /* Muted blue-gray */
+    }
+
+    /* KPI Cards Container styling - Pure White base */
+    .metric-card {
+        background-color: #ffffff !important;
+        border: 1px solid #e2e8f0 !important;
+        border-radius: 12px;
+        padding: 1.25rem;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
+        transition: all 0.2s ease-in-out;
     }
     
     .metric-card:hover {
-        transform: translateY(-3px);
-        box-shadow: 0 15px 30px -8px rgba(0, 0, 0, 0.7);
-        border-color: rgba(6, 182, 212, 0.3) !important;
+        transform: translateY(-2px);
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.08);
+        border-color: #cbd5e1 !important;
     }
 
     .metric-title {
         font-size: 0.8rem;
         font-weight: 700;
         text-transform: uppercase;
-        letter-spacing: 0.08em;
+        letter-spacing: 0.06em;
         color: #64748b;
-        margin-bottom: 0.4rem;
+        margin-bottom: 0.3rem;
     }
     
     .metric-value {
-        font-size: 2.1rem;
+        font-size: 2rem;
         font-weight: 800;
         font-family: 'JetBrains Mono', monospace;
-        letter-spacing: -0.02em;
+        letter-spacing: -0.01em;
     }
 
-    /* Theme colors */
+    /* Left-border colored indicators */
     .metric-total {
-        border-left: 4px solid #06b6d4 !important;
+        border-left: 4px solid #2563eb !important; /* Royal Blue */
     }
     .metric-total .metric-value {
-        color: #22d3ee !important; /* Light Teal */
+        color: #1d4ed8 !important;
     }
 
     .metric-passed {
-        border-left: 4px solid #10b981 !important;
+        border-left: 4px solid #10b981 !important; /* Emerald */
     }
     .metric-passed .metric-value {
-        color: #34d399 !important; /* Mint Green */
+        color: #047857 !important;
     }
 
     .metric-warnings {
-        border-left: 4px solid #f59e0b !important;
+        border-left: 4px solid #f59e0b !important; /* Amber */
     }
     .metric-warnings .metric-value {
-        color: #fbbf24 !important; /* Amber */
+        color: #b45309 !important;
     }
 
     .metric-failed {
-        border-left: 4px solid #ef4444 !important;
+        border-left: 4px solid #ef4444 !important; /* Red */
     }
     .metric-failed .metric-value {
-        color: #f87171 !important; /* Rose */
+        color: #b91c1c !important;
     }
 
-    /* Tabs Component Styling */
+    /* Tabs Component Styling - White backdrop with royal blue underline style */
     .stTabs [data-baseweb="tab-list"] {
-        background-color: #0b0c10 !important;
-        border-radius: 10px;
-        padding: 5px;
-        border: 1px solid rgba(6, 182, 212, 0.15) !important;
-        gap: 6px;
+        background-color: #ffffff !important;
+        border-radius: 8px;
+        padding: 4px;
+        border: 1px solid #e2e8f0 !important;
+        gap: 4px;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
     }
     .stTabs [data-baseweb="tab"] {
-        color: #94a3b8 !important;
+        color: #64748b !important;
         font-weight: 600 !important;
         font-size: 0.88rem !important;
         padding: 8px 16px !important;
         border-radius: 6px !important;
         border: none !important;
-        transition: all 0.2s;
+        transition: all 0.15s;
     }
     .stTabs [aria-selected="true"] {
-        color: #ffffff !important;
-        background-color: #0891b2 !important; /* Dark Teal */
+        color: #2563eb !important; /* Royal Blue text */
+        background-color: #f8fafc !important; /* Very soft light gray */
+        border-bottom: 2px solid #2563eb !important;
         font-weight: 700 !important;
-        box-shadow: 0 4px 12px rgba(8, 145, 178, 0.3);
     }
 
     /* Custom buttons (primary & download) */
     .stButton > button {
-        border-radius: 10px !important;
+        border-radius: 8px !important;
         font-weight: 700 !important;
         font-size: 0.95rem !important;
-        letter-spacing: 0.02em !important;
-        transition: all 0.25s ease-in-out !important;
+        letter-spacing: 0.01em !important;
+        transition: all 0.2s ease-in-out !important;
+        padding: 0.5rem 1.5rem !important;
     }
     .stButton > button[kind="primary"] {
-        background: linear-gradient(135deg, #0891b2 0%, #06b6d4 100%) !important;
+        background-color: #2563eb !important; /* Royal Blue */
         color: white !important;
-        border: none !important;
-        box-shadow: 0 4px 15px rgba(6, 182, 212, 0.25) !important;
+        border: 1px solid #1d4ed8 !important;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1) !important;
     }
     .stButton > button[kind="primary"]:hover {
-        background: linear-gradient(135deg, #0e7490 0%, #0891b2 100%) !important;
-        transform: translateY(-1px) !important;
-        box-shadow: 0 6px 20px rgba(6, 182, 212, 0.4) !important;
+        background-color: #1d4ed8 !important;
+        transform: translateY(-0.5px) !important;
+        box-shadow: 0 4px 6px rgba(37, 99, 235, 0.15) !important;
     }
 
     .stDownloadButton > button {
         background-color: #0f766e !important;
-        border: 1px solid #14b8a6 !important;
-        color: #ccfbf1 !important;
-        box-shadow: 0 4px 12px rgba(20, 184, 166, 0.15) !important;
+        border: 1px solid #0d9488 !important;
+        color: #ffffff !important;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1) !important;
     }
     .stDownloadButton > button:hover {
         background-color: #0d9488 !important;
-        color: white !important;
-        border-color: #2dd4bf !important;
-        transform: translateY(-1px) !important;
-        box-shadow: 0 6px 18px rgba(20, 184, 166, 0.3) !important;
+        transform: translateY(-0.5px) !important;
+        box-shadow: 0 4px 6px rgba(13, 148, 136, 0.15) !important;
     }
 
-    /* Expanders & collapse details layout */
+    /* Expanders & details panels */
     .streamlit-expanderHeader {
-        background-color: #1a1b24 !important;
-        border: 1px solid rgba(6, 182, 212, 0.15) !important;
-        border-radius: 10px !important;
+        background-color: #ffffff !important;
+        border: 1px solid #e2e8f0 !important;
+        border-radius: 8px !important;
         font-size: 0.9rem !important;
         font-weight: 600 !important;
-        color: #ffffff !important;
+        color: #1e293b !important;
         margin-bottom: 0.4rem !important;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.02) !important;
     }
     .streamlit-expanderContent {
-        border-left: 1px solid rgba(6, 182, 212, 0.15) !important;
-        border-right: 1px solid rgba(6, 182, 212, 0.15) !important;
-        border-bottom: 1px solid rgba(6, 182, 212, 0.15) !important;
-        background-color: #0b0c10 !important;
+        border-left: 1px solid #e2e8f0 !important;
+        border-right: 1px solid #e2e8f0 !important;
+        border-bottom: 1px solid #e2e8f0 !important;
+        background-color: #ffffff !important;
         padding: 1.25rem !important;
-        border-radius: 0 0 10px 10px !important;
+        border-radius: 0 0 8px 8px !important;
+    }
+
+    /* Input selectbox and text areas formatting */
+    div[data-baseweb="select"] {
+        background-color: #ffffff !important;
+        border-radius: 8px !important;
+        border: 1px solid #cbd5e1 !important;
     }
 
     /* Logs view block */
     .log-box {
         font-family: 'JetBrains Mono', monospace !important;
-        background-color: #050608 !important;
-        border: 1px solid rgba(6, 182, 212, 0.2) !important;
-        border-radius: 10px !important;
+        background-color: #0f172a !important;
+        border: 1px solid #e2e8f0 !important;
+        border-radius: 8px !important;
         padding: 1rem !important;
         height: 250px !important;
         overflow-y: auto !important;
-        color: #2dd4bf !important;
+        color: #38bdf8 !important;
         font-size: 0.85rem !important;
         line-height: 1.5 !important;
-        box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.7) !important;
+        box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.3) !important;
     }
 
-    /* Info text boxes in Streamlit */
+    /* Notification alert boxes */
     div[data-testid="stNotification"] {
-        background-color: #1a1b24 !important;
-        border: 1px solid rgba(6, 182, 212, 0.2) !important;
-        color: #e2e8f0 !important;
-        border-radius: 10px !important;
+        background-color: #ffffff !important;
+        border: 1px solid #cbd5e1 !important;
+        color: #1e293b !important;
+        border-radius: 8px !important;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.02) !important;
     }
 
-    /* Validation custom badges (pills) */
+    /* Soft pill badges */
     .qc-error-badge {
-        background-color: #7f1d1d !important;
-        color: #fca5a5 !important;
-        padding: 3px 8px !important;
+        background-color: #fee2e2 !important;
+        color: #991b1b !important;
+        padding: 3px 10px !important;
         border-radius: 12px !important;
         font-size: 0.72rem !important;
         font-weight: 700 !important;
         display: inline-block !important;
+        border: 1px solid #fca5a5 !important;
     }
     .qc-warn-badge {
-        background-color: #78350f !important;
-        color: #fde047 !important;
-        padding: 3px 8px !important;
+        background-color: #fef3c7 !important;
+        color: #92400e !important;
+        padding: 3px 10px !important;
         border-radius: 12px !important;
         font-size: 0.72rem !important;
         font-weight: 700 !important;
         display: inline-block !important;
+        border: 1px solid #fde047 !important;
     }
     .qc-pass-badge {
-        background-color: #064e3b !important;
-        color: #6ee7b7 !important;
-        padding: 3px 8px !important;
+        background-color: #d1fae5 !important;
+        color: #065f46 !important;
+        padding: 3px 10px !important;
         border-radius: 12px !important;
         font-size: 0.72rem !important;
         font-weight: 700 !important;
         display: inline-block !important;
+        border: 1px solid #6ee7b7 !important;
     }
 
     </style>
