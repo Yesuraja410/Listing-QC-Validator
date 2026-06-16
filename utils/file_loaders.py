@@ -112,8 +112,6 @@ def _normalise_article_no(val):
     return s
 
 def _ecom_status_from_val(val, future_launch):
-    if bool(future_launch):
-        return "No"
     s = _safe_str(val).upper()
     if s in ("YES", "Y"):
         return "Yes"
