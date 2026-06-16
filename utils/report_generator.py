@@ -202,10 +202,11 @@ def generate_qc_excel_report(val_df: pd.DataFrame, exc_df: pd.DataFrame, qc_stag
                 
         # Auto-adjust column widths
         for col_num, col_name in enumerate(exc_df.columns):
-            max_len = max(
-                exc_df[col_name].astype(str).map(len).max(),
-                len(col_name)
-            ) + 3
+            col_lens = exc_df[col_name].apply(lambda x: len(str(x)) if pd.notna(x) else 0)
+            max_val_len = col_lens.max() if not col_lens.empty else 0
+            if pd.isna(max_val_len):
+                max_val_len = 0
+            max_len = max(int(max_val_len), len(col_name)) + 3
             # Limit width to 50
             ws_exc.set_column(col_num, col_num, min(max(max_len, 10), 50))
             
@@ -239,10 +240,11 @@ def generate_qc_excel_report(val_df: pd.DataFrame, exc_df: pd.DataFrame, qc_stag
                 
         # Auto-adjust column widths
         for col_num, col_name in enumerate(clean_val_df.columns):
-            max_len = max(
-                clean_val_df[col_name].astype(str).map(len).max(),
-                len(col_name)
-            ) + 3
+            col_lens = clean_val_df[col_name].apply(lambda x: len(str(x)) if pd.notna(x) else 0)
+            max_val_len = col_lens.max() if not col_lens.empty else 0
+            if pd.isna(max_val_len):
+                max_val_len = 0
+            max_len = max(int(max_val_len), len(col_name)) + 3
             ws_val.set_column(col_num, col_num, min(max(max_len, 10), 40))
             
         ws_val.autofilter(3, 0, len(clean_val_df) + 3, len(clean_val_df.columns) - 1)
@@ -382,10 +384,11 @@ def generate_comparison_excel_report(comp_df: pd.DataFrame, summary_metrics: Dic
                 ws_det.write(row_idx, c, str(val) if not pd.isna(val) else "", row_format)
                 
         for col_num, col_name in enumerate(comp_df.columns):
-            max_len = max(
-                comp_df[col_name].astype(str).map(len).max(),
-                len(col_name)
-            ) + 3
+            col_lens = comp_df[col_name].apply(lambda x: len(str(x)) if pd.notna(x) else 0)
+            max_val_len = col_lens.max() if not col_lens.empty else 0
+            if pd.isna(max_val_len):
+                max_val_len = 0
+            max_len = max(int(max_val_len), len(col_name)) + 3
             ws_det.set_column(col_num, col_num, min(max(max_len, 10), 45))
             
         ws_det.autofilter(3, 0, len(comp_df) + 3, len(comp_df.columns) - 1)
