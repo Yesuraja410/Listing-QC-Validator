@@ -9,7 +9,7 @@ import streamlit as st
 # Synonyms for auto-mapping columns
 COLUMN_SYNONYMS = {
     "sku": [
-        "seller sku", "sku", "seller_sku", "ean", "barcode", "upc", 
+        "seller sku", "sku", "seller_sku", "sellersku", "ean", "barcode", "upc", 
         "item code", "item_code", "product sku", "product_sku", "seller sku sku"
     ],
     "article_number": [
@@ -36,11 +36,12 @@ COLUMN_SYNONYMS = {
     "color_name": [
         "color name", "color_name", "color", "colour", "color_no", 
         "color number", "color_description", "color description",
-        "variation 1", "variation1", "variation_1"
+        "variation 1", "variation1", "variation_1", "primary variation value (option)"
     ],
     "size": [
         "size", "size_code", "size code", "sizing", "product size", 
-        "size_name", "size name", "variation 2", "variation2", "variation_2"
+        "size_name", "size name", "variation 2", "variation2", "variation_2",
+        "variation", "secondary variation value (option)"
     ],
     "quantity": [
         "quantity", "qty", "stock", "inventory", "quantity available", 
@@ -48,7 +49,8 @@ COLUMN_SYNONYMS = {
     ],
     "price": [
         "price", "retail price", "selling price", "amount", "msrp", 
-        "price list", "unit price", "selling_price", "retail_price", "rrp"
+        "price list", "unit price", "selling_price", "retail_price", "rrp",
+        "retail price (local currency)"
     ],
     "images": [
         "images", "image", "image url", "image_url", "image urls", 
@@ -57,7 +59,7 @@ COLUMN_SYNONYMS = {
     ],
     "size_chart": [
         "size chart", "size_chart", "size chart url", "size_chart_url", 
-        "size chart link", "chart", "size_chart_link"
+        "size_chart_link", "chart", "size_chart_link"
     ]
 }
 
@@ -171,15 +173,38 @@ def _read_file(file, header_row=0, skiprows=None):
     except Exception:
         return pd.DataFrame()
 
-def load_file_to_df(file_or_path, filename: str = None) -> pd.DataFrame:
-    df = _read_file(file_or_path, header_row=0, skiprows=[0, 2])
-    if df.empty or not any(c in df.columns for c in ["Seller SKU", "SKU", "SellerSKU", "Product Name", "Variation 1"]):
+def get_parse_params(channel: str = None):
+    if channel:
+        channel_lower = channel.lower()
+        if "zalora" in channel_lower:
+            # Header in 3rd row (index 2). First two rows ignored.
+            return 2, None
+        elif "tiktok" in channel_lower:
+            # Header in 3rd row (index 2). Ignore 4, 5, 6 rows (indices 3, 4, 5).
+            # Also ignore first two rows (indices 0, 1).
+            # skiprows=[0, 1, 3, 4, 5]. Since index 2 is not skipped, it becomes the first row (header index 0).
+            return 0, [0, 1, 3, 4, 5]
+    return 0, [0, 2]
+
+def load_file_to_df(file_or_path, filename: str = None, channel: str = None) -> pd.DataFrame:
+    h, s = get_parse_params(channel)
+    df = _read_file(file_or_path, header_row=h, skiprows=s)
+    
+    check_cols = ["Seller SKU", "SKU", "SellerSKU", "Product Name", "Variation 1"]
+    if channel:
+        channel_lower = channel.lower()
+        if "zalora" in channel_lower:
+            check_cols.extend(["sellersku", "name", "variation"])
+        elif "tiktok" in channel_lower:
+            check_cols.extend(["seller sku", "product name", "primary variation value (option)", "secondary variation value (option)"])
+            
+    if df.empty or not any(c.lower() in [col.lower() for col in df.columns] for c in check_cols):
         df_normal = _read_file(file_or_path, header_row=0, skiprows=None)
         if not df_normal.empty:
             return df_normal
     return df
 
-def load_excel_all_sheets(file_or_path) -> dict:
+def load_excel_all_sheets(file_or_path, channel: str = None) -> dict:
     if file_or_path is None:
         return {}
     
@@ -198,11 +223,19 @@ def load_excel_all_sheets(file_or_path) -> dict:
             xl = pd.ExcelFile(io.BytesIO(raw))
             
         sheet_dfs = {}
+        h, s = get_parse_params(channel)
         for s_name in xl.sheet_names:
             df = pd.DataFrame()
             try:
-                df = xl.parse(s_name, skiprows=[0, 2], dtype=str)
-                if df.empty or not any(c in df.columns for c in ["Seller SKU", "SKU", "SellerSKU", "Product Name", "Variation 1"]):
+                df = xl.parse(s_name, header=h, skiprows=s, dtype=str)
+                check_cols = ["Seller SKU", "SKU", "SellerSKU", "Product Name", "Variation 1"]
+                if channel:
+                    channel_lower = channel.lower()
+                    if "zalora" in channel_lower:
+                        check_cols.extend(["sellersku", "name", "variation"])
+                    elif "tiktok" in channel_lower:
+                        check_cols.extend(["seller sku", "product name", "primary variation value (option)", "secondary variation value (option)"])
+                if df.empty or not any(c.lower() in [col.lower() for col in df.columns] for c in check_cols):
                     df = xl.parse(s_name, dtype=str)
             except Exception:
                 try:
@@ -215,10 +248,20 @@ def load_excel_all_sheets(file_or_path) -> dict:
     except Exception:
         return {}
 
-def load_google_sheet(url: str) -> pd.DataFrame:
+def load_google_sheet(url: str, channel: str = None) -> pd.DataFrame:
     csv_url = parse_google_sheets_url(url)
-    df = pd.read_csv(csv_url, skiprows=[0, 2], dtype=str)
-    if df.empty or not any(c in df.columns for c in ["Seller SKU", "SKU", "SellerSKU", "Product Name", "Variation 1"]):
+    h, s = get_parse_params(channel)
+    df = pd.read_csv(csv_url, header=h, skiprows=s, dtype=str)
+    
+    check_cols = ["Seller SKU", "SKU", "SellerSKU", "Product Name", "Variation 1"]
+    if channel:
+        channel_lower = channel.lower()
+        if "zalora" in channel_lower:
+            check_cols.extend(["sellersku", "name", "variation"])
+        elif "tiktok" in channel_lower:
+            check_cols.extend(["seller sku", "product name", "primary variation value (option)", "secondary variation value (option)"])
+            
+    if df.empty or not any(c.lower() in [col.lower() for col in df.columns] for c in check_cols):
         df_normal = pd.read_csv(csv_url, dtype=str)
         if not df_normal.empty:
             return df_normal
