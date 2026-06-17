@@ -245,5 +245,24 @@ class TestValidators(unittest.TestCase):
         # We expect 0 exceptions since parent SKU validations are ignored.
         self.assertEqual(len(excs), 0, f"Expected 0 exceptions, found: {excs}")
 
+    def test_size_wl_normalization(self):
+        from validators import clean_size_for_comparison
+        self.assertEqual(clean_size_for_comparison("Int:W28 L30"), "28/30")
+        self.assertEqual(clean_size_for_comparison("W28 L32"), "28/32")
+        self.assertEqual(clean_size_for_comparison("W30L34"), "30/34")
+
+    def test_gender_product_name_mismatch(self):
+        row = self.valid_upload_row.copy()
+        row["gender"] = "Male"
+        row["product_name"] = "[NEW] PUMA x RICK AND MORTY Unisex Sweatpants (Black)"
+        excs = validate_row_internal(
+            row, 0,
+            channel="Shopee PH",
+            content_maps=self.content_maps,
+            zecom_maps=self.zecom_maps_shopee
+        )
+        gender_prod_excs = [e for e in excs if "gender" in e["Message"].lower()]
+        self.assertTrue(len(gender_prod_excs) > 0, "Expected a gender-related exception.")
+
 if __name__ == '__main__':
     unittest.main()
