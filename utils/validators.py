@@ -350,45 +350,46 @@ def validate_row_internal(
                 add_exc("E-commerce Status", ecom_status, "Error", f"Status mismatch: Uploaded status is '{ecom_status}' but zEcom File defines it as '{ref_ecom_status}' for Article No '{art_num}'.")
 
     # 4. Launch Date zEcom Check
-    ref_ld_str = ""
-    ref_ld = None
-    if article_to_launchdate is not None and norm_art:
-        ref_ld_str = article_to_launchdate.get(norm_art, "")
-        if ref_ld_str:
-            try:
-                ref_ld = pd.to_datetime(ref_ld_str).date()
-                if ref_ld > datetime.date.today():
-                    add_exc("Launch Date", ref_ld_str, "Error", f"Future Launch Date: zEcom File defines launch date as '{ref_ld_str}' (future). Product cannot be listed yet.")
-            except Exception:
-                pass
-
-    # If launch date is mapped in sheet, check it
-    parsed_date = None
-    if pd.notna(row.get("launch_date")) and not is_empty(row.get("launch_date")):
-        launch_date_raw = row.get("launch_date")
-        if isinstance(launch_date_raw, (datetime.datetime, datetime.date)):
-            parsed_date = launch_date_raw
-        else:
-            for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%Y/%m/%d", "%d-%m-%Y"):
+    if not is_parent_sku and not is_empty(row.get("article_number")):
+        ref_ld_str = ""
+        ref_ld = None
+        if article_to_launchdate is not None and norm_art:
+            ref_ld_str = article_to_launchdate.get(norm_art, "")
+            if ref_ld_str:
                 try:
-                    parsed_date = datetime.datetime.strptime(str(launch_date_raw).strip(), fmt).date()
-                    break
-                except ValueError:
-                    continue
-            if parsed_date is None:
-                try:
-                    parsed_date = pd.to_datetime(launch_date_raw).date()
+                    ref_ld = pd.to_datetime(ref_ld_str).date()
+                    if ref_ld > datetime.date.today():
+                        add_exc("Launch Date", ref_ld_str, "Error", f"Future Launch Date: zEcom File defines launch date as '{ref_ld_str}' (future). Product cannot be listed yet.")
                 except Exception:
                     pass
-        if parsed_date is None:
-            add_exc("Launch Date", launch_date_raw, "Error", "Launch Date has an invalid format. Recommended: YYYY-MM-DD.")
-        else:
-            if isinstance(parsed_date, datetime.datetime):
-                parsed_date = parsed_date.date()
-            if parsed_date > datetime.date.today():
-                add_exc("Launch Date", launch_date_raw, "Error", f"Future Launch Date: Uploaded launch date '{launch_date_raw}' is in the future.")
-            if ref_ld and parsed_date != ref_ld:
-                add_exc("Launch Date", launch_date_raw, "Warning", f"Launch Date mismatch: Uploaded '{launch_date_raw}' does not match zEcom File Launch Date '{ref_ld_str}'.")
+
+        # If launch date is mapped in sheet, check it
+        parsed_date = None
+        if pd.notna(row.get("launch_date")) and not is_empty(row.get("launch_date")):
+            launch_date_raw = row.get("launch_date")
+            if isinstance(launch_date_raw, (datetime.datetime, datetime.date)):
+                parsed_date = launch_date_raw
+            else:
+                for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%Y/%m/%d", "%d-%m-%Y"):
+                    try:
+                        parsed_date = datetime.datetime.strptime(str(launch_date_raw).strip(), fmt).date()
+                        break
+                    except ValueError:
+                        continue
+                if parsed_date is None:
+                    try:
+                        parsed_date = pd.to_datetime(launch_date_raw).date()
+                    except Exception:
+                        pass
+            if parsed_date is None:
+                add_exc("Launch Date", launch_date_raw, "Error", "Launch Date has an invalid format. Recommended: YYYY-MM-DD.")
+            else:
+                if isinstance(parsed_date, datetime.datetime):
+                    parsed_date = parsed_date.date()
+                if parsed_date > datetime.date.today():
+                    add_exc("Launch Date", launch_date_raw, "Error", f"Future Launch Date: Uploaded launch date '{launch_date_raw}' is in the future.")
+                if ref_ld and parsed_date != ref_ld:
+                    add_exc("Launch Date", launch_date_raw, "Warning", f"Launch Date mismatch: Uploaded '{launch_date_raw}' does not match zEcom File Launch Date '{ref_ld_str}'.")
 
     if not is_parent_sku:
         # 5. Gender Check
@@ -825,7 +826,7 @@ def validate_dataframe(
         # zEcom Status lookup
         ref_ecom_status = "Not Found"
         if is_parent_sku:
-            ref_ecom_status = "Yes" # Bypassed/Not applicable for Parent SKUs
+            ref_ecom_status = "" # Not fetched (blank) for Parent SKUs
         elif zecom_maps:
             article_to_launchdate, article_to_ecomstatus, article_to_rrpprice = zecom_maps
             if article_to_ecomstatus and norm_art:
