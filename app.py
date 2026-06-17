@@ -440,7 +440,7 @@ if target_loaded:
         with container_dashboard:
             # Build Checklist Metrics
             # 1. zEcom Status check (only for 13-digit child SKUs)
-            child_df = val_df[val_df["sku"].dropna().astype(str).str.strip().str.match(r'^\d{13}$')]
+            child_df = val_df[val_df["sku"].fillna("").astype(str).str.strip().str.match(r'^\d{13}$')]
             no_status_count = sum(child_df["Zeocm Status"] != "Yes")
             status_ok = no_status_count == 0
             status_badge = '<span class="qc-status-ok">OK</span>' if status_ok else '<span class="qc-status-mismatch">Mismatch</span>'
