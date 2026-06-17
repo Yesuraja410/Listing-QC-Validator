@@ -693,6 +693,8 @@ def validate_dataframe(
     logs.append("Content File size mappings built successfully.")
     zecom_maps = build_zecom_maps(zecom_df, channel)
     logs.append(f"zEcom File status and RRP price mappings built successfully.")
+    if zecom_df is not None and hasattr(zecom_df, "attrs") and "selected_sheet" in zecom_df.attrs:
+        logs.append(f"Loaded zEcom sheet '{zecom_df.attrs['selected_sheet']}' (available: {zecom_df.attrs['sheet_names']}) for country '{zecom_df.attrs['passed_country']}'.")
     
     sku_to_article = content_maps[0] if content_maps else None
         
