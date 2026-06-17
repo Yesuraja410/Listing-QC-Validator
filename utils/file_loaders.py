@@ -737,23 +737,57 @@ def load_zecom(file, country="PH"):
             target_sheet = sheet_names[0]
             
             country_lower = country.lower().strip()
+            country_keywords = {
+                "my": ["my", "malaysia"],
+                "sg": ["sg", "singapore"],
+                "ph": ["ph", "phil", "philippines"]
+            }
+            keywords = country_keywords.get(country_lower, [country_lower])
+            
+            # 1. Try exact match first (case-insensitive)
+            matched_sheet = None
             for s_name in sheet_names:
                 s_name_lower = s_name.lower().strip()
-                if country_lower == "my" and ("my" in s_name_lower or "malaysia" in s_name_lower):
-                    target_sheet = s_name
+                if s_name_lower in keywords:
+                    matched_sheet = s_name
                     break
-                elif country_lower == "sg" and ("sg" in s_name_lower or "singapore" in s_name_lower):
-                    target_sheet = s_name
-                    break
-                elif country_lower == "ph" and ("ph" in s_name_lower or "phil" in s_name_lower):
-                    target_sheet = s_name
-                    break
+            
+            # 2. Try word boundary match (e.g. "SG tracker" or "Lazada SG")
+            if not matched_sheet:
+                for s_name in sheet_names:
+                    s_name_lower = s_name.lower().strip()
+                    cleaned_s_name = re.sub(r'[^a-z0-9]', ' ', s_name_lower)
+                    for kw in keywords:
+                        if re.search(r'\b' + re.escape(kw) + r'\b', cleaned_s_name):
+                            matched_sheet = s_name
+                            break
+                    if matched_sheet:
+                        break
+            
+            # 3. Try substring match as fallback
+            if not matched_sheet:
+                for s_name in sheet_names:
+                    s_name_lower = s_name.lower().strip()
+                    if any(kw in s_name_lower for kw in keywords):
+                        matched_sheet = s_name
+                        break
+            
+            if matched_sheet:
+                target_sheet = matched_sheet
+                
             raw_df = xl.parse(target_sheet, header=None, dtype=str)
     except Exception:
         return pd.DataFrame()
 
     if raw_df.empty:
         return pd.DataFrame()
+
+    # Set metadata attributes for logging
+    if not hasattr(raw_df, "attrs"):
+        raw_df.attrs = {}
+    raw_df.attrs["selected_sheet"] = target_sheet
+    raw_df.attrs["sheet_names"] = sheet_names if 'sheet_names' in locals() else [name]
+    raw_df.attrs["passed_country"] = country
 
     header_idx = None
     for r_idx in preferred_rows:
