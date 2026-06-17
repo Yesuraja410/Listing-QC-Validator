@@ -179,6 +179,42 @@ def load_file_to_df(file_or_path, filename: str = None) -> pd.DataFrame:
             return df_normal
     return df
 
+def load_excel_all_sheets(file_or_path) -> dict:
+    if file_or_path is None:
+        return {}
+    
+    if isinstance(file_or_path, str):
+        with open(file_or_path, 'rb') as f:
+            raw = f.read()
+    else:
+        raw = file_or_path.read()
+        file_or_path.seek(0)
+        
+    try:
+        try:
+            import python_calamine
+            xl = pd.ExcelFile(io.BytesIO(raw), engine="calamine")
+        except ImportError:
+            xl = pd.ExcelFile(io.BytesIO(raw))
+            
+        sheet_dfs = {}
+        for s_name in xl.sheet_names:
+            df = pd.DataFrame()
+            try:
+                df = xl.parse(s_name, skiprows=[0, 2], dtype=str)
+                if df.empty or not any(c in df.columns for c in ["Seller SKU", "SKU", "SellerSKU", "Product Name", "Variation 1"]):
+                    df = xl.parse(s_name, dtype=str)
+            except Exception:
+                try:
+                    df = xl.parse(s_name, dtype=str)
+                except Exception:
+                    pass
+            if not df.empty:
+                sheet_dfs[s_name] = df
+        return sheet_dfs
+    except Exception:
+        return {}
+
 def load_google_sheet(url: str) -> pd.DataFrame:
     csv_url = parse_google_sheets_url(url)
     df = pd.read_csv(csv_url, skiprows=[0, 2], dtype=str)
