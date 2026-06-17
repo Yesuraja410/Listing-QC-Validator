@@ -117,15 +117,15 @@ def correct_size(sz: str) -> str:
 
 def clean_size_for_comparison(sz: str) -> str:
     s = str(sz).strip().lower()
-    # Normalize size corrections (e.g. 2xl -> xxl, 3xl -> xxxl) before doing comparison
-    if s in SIZE_CORRECTIONS:
-        s = SIZE_CORRECTIONS[s].lower()
     # Remove prefixes like 'uk:', 'us:', 'int:' case-insensitively, anywhere at the start
     s = re.sub(r'^(?:uk|us|int|uk:|us:|int:)[:\s\-]*', '', s)
     # Remove 'yrs-y', 'yrs-y', 'yrs', 'yr', 'y' variations at the end
     s = re.sub(r'[\s\-]*yrs?\-?y?\b', '', s)
     s = re.sub(r'[\s\-]*y\b', '', s)
     s = s.strip()
+    # Normalize size corrections (e.g. 2xl -> xxl, 3xl -> xxxl) after stripping prefixes/suffixes
+    if s in SIZE_CORRECTIONS:
+        s = SIZE_CORRECTIONS[s].lower()
     return s
 
 def is_footwear(product_name: str) -> bool:
