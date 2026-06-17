@@ -123,6 +123,12 @@ def clean_size_for_comparison(sz: str) -> str:
     s = re.sub(r'[\s\-]*yrs?\-?y?\b', '', s)
     s = re.sub(r'[\s\-]*y\b', '', s)
     s = s.strip()
+    
+    # Check for W<waist> L<length> pattern (e.g. w28 l30 or w28l30)
+    w_l_match = re.search(r'\bw\s*(\d+)\s*l\s*(\d+)\b', s)
+    if w_l_match:
+        s = f"{w_l_match.group(1)}/{w_l_match.group(2)}"
+        
     # Normalize size corrections (e.g. 2xl -> xxl, 3xl -> xxxl) after stripping prefixes/suffixes
     if s in SIZE_CORRECTIONS:
         s = SIZE_CORRECTIONS[s].lower()
