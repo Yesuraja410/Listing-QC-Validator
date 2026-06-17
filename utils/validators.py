@@ -322,7 +322,7 @@ def validate_row_internal(
         })
 
     # 1. Article Number Basic Check
-    if is_empty(row.get("article_number")):
+    if not is_parent_sku and is_empty(row.get("article_number")):
         add_exc("Article Number", row.get("article_number"), "Error", "Article Number is missing.")
 
     # 2. SKU Basic Check
