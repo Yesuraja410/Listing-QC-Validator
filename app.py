@@ -454,7 +454,10 @@ if target_loaded:
             launch_text = "All launch dates are past/current" if launch_ok else f"{launch_rows} future launch dates flagged"
             
             # 3. Gender check
-            gender_excs = exc_df[exc_df["Field"] == "Gender"] if not exc_df.empty else pd.DataFrame()
+            gender_excs = exc_df[
+                (exc_df["Field"] == "Gender") | 
+                ((exc_df["Field"] == "Product Name") & exc_df["Message"].str.contains("gender", case=False, na=False))
+            ] if not exc_df.empty else pd.DataFrame()
             gender_ok = gender_excs.empty
             gender_badge = '<span class="qc-status-ok">OK</span>' if gender_ok else '<span class="qc-status-mismatch">Mismatch</span>'
             gender_rows = gender_excs.groupby(["Source File", "Row Number"]).ngroups if not gender_ok else 0
