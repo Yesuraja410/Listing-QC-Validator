@@ -274,5 +274,61 @@ def inject_css():
         display: inline-block !important;
     }
 
+    /* QC Validation Checklist Table */
+    .qc-table {
+        width: 100%;
+        border-collapse: separate !important;
+        border-spacing: 0 !important;
+        background-color: rgba(18, 20, 38, 0.7) !important;
+        border: 1px solid rgba(217, 70, 239, 0.25) !important;
+        border-radius: 12px !important;
+        overflow: hidden !important;
+        margin-top: 1rem !important;
+        margin-bottom: 2rem !important;
+        box-shadow: 0 10px 25px -10px rgba(0, 0, 0, 0.7);
+    }
+    .qc-table th {
+        background-color: rgba(30, 41, 59, 0.9) !important;
+        color: #ffffff !important;
+        font-weight: 700 !important;
+        font-size: 0.85rem !important;
+        text-transform: uppercase !important;
+        letter-spacing: 0.05em !important;
+        padding: 12px 16px !important;
+        border-bottom: 1px solid rgba(217, 70, 239, 0.2) !important;
+    }
+    .qc-table td {
+        padding: 12px 16px !important;
+        font-size: 0.88rem !important;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05) !important;
+        color: #e2e8f0 !important;
+    }
+    .qc-table tr:last-child td {
+        border-bottom: none !important;
+    }
+    .qc-status-ok {
+        background-color: rgba(6, 78, 59, 0.4) !important;
+        color: #34d399 !important;
+        border: 1px solid rgba(52, 211, 153, 0.3) !important;
+        padding: 4px 10px !important;
+        border-radius: 6px !important;
+        font-weight: 700 !important;
+        font-size: 0.75rem !important;
+        text-align: center !important;
+        display: inline-block !important;
+    }
+    .qc-status-mismatch {
+        background-color: rgba(127, 29, 29, 0.4) !important;
+        color: #f87171 !important;
+        border: 1px solid rgba(248, 113, 113, 0.3) !important;
+        padding: 4px 10px !important;
+        border-radius: 6px !important;
+        font-weight: 700 !important;
+        font-size: 0.75rem !important;
+        text-align: center !important;
+        display: inline-block !important;
+        box-shadow: 0 0 10px rgba(239, 68, 68, 0.1);
+    }
+
     </style>
     """, unsafe_allow_html=True)
