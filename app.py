@@ -399,86 +399,165 @@ if target_loaded:
         logs = st.session_state.logs
         
         total_records = len(val_df)
-        passed_count = sum(val_df["_qc_status"] == "Passed")
-        warning_count = sum(val_df["_qc_status"] == "Warning")
-        failed_count = sum(val_df["_qc_status"] == "Failed")
+        total_skus = val_df["sku"].nunique() if "sku" in val_df.columns else 0
+        total_articles = val_df["article_number"].nunique() if "article_number" in val_df.columns else 0
+        total_exceptions = len(exc_df) if not exc_df.empty else 0
         
         kpi_cols = st.columns(4)
         with kpi_cols[0]:
-            st.markdown(f'<div class="metric-card metric-total"><div class="metric-title">Total Audited</div><div class="metric-value">{total_records}</div></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="metric-card metric-total"><div class="metric-title">Total Rows Audited</div><div class="metric-value">{total_records}</div></div>', unsafe_allow_html=True)
         with kpi_cols[1]:
-            st.markdown(f'<div class="metric-card metric-passed"><div class="metric-title">Passed (Clean)</div><div class="metric-value">{passed_count}</div></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="metric-card metric-passed" style="border-left-color: #38bdf8 !important;"><div class="metric-title" style="color: #38bdf8 !important;">Total Unique SKUs</div><div class="metric-value" style="color: #38bdf8 !important;">{total_skus}</div></div>', unsafe_allow_html=True)
         with kpi_cols[2]:
-            st.markdown(f'<div class="metric-card metric-warnings"><div class="metric-title">Warnings Flagged</div><div class="metric-value">{warning_count}</div></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="metric-card metric-warnings" style="border-left-color: #a78bfa !important;"><div class="metric-title" style="color: #a78bfa !important;">Total Unique Articles</div><div class="metric-value" style="color: #a78bfa !important;">{total_articles}</div></div>', unsafe_allow_html=True)
         with kpi_cols[3]:
-            st.markdown(f'<div class="metric-card metric-failed"><div class="metric-title">Failed (Critical Errors)</div><div class="metric-value">{failed_count}</div></div>', unsafe_allow_html=True)
+            ex_color = "#f87171" if total_exceptions > 0 else "#34d399"
+            ex_border = "#ef4444" if total_exceptions > 0 else "#10b981"
+            st.markdown(f'<div class="metric-card metric-failed" style="border-left-color: {ex_border} !important;"><div class="metric-title" style="color: {ex_color} !important;">Errors & Warnings</div><div class="metric-value" style="color: {ex_color} !important;">{total_exceptions}</div></div>', unsafe_allow_html=True)
             
-        tabs = [
-            "📊 Dashboard & Data View",
-            "❌ Exceptions Report",
-            "📜 Execution Logs"
-        ]
-        
+        # Create containers/tabs depending on QC stage
         if qc_stage == "Post QC":
-            tabs.insert(2, "🔄 Live Listing Sync Audit")
-            
-        tab_list = st.tabs(tabs)
-        tab_dashboard = tab_list[0]
-        tab_exceptions = tab_list[1]
-        
-        if qc_stage == "Post QC":
-            tab_live_compare = tab_list[2]
-            tab_logs = tab_list[3]
+            tab_list = st.tabs(["📊 Dashboard & Data View", "🔄 Live Listing Sync Audit"])
+            container_dashboard = tab_list[0]
+            container_live = tab_list[1]
         else:
-            tab_logs = tab_list[2]
-            tab_live_compare = None
-        
-        with tab_dashboard:
-            db_col1, db_col2 = st.columns([1, 2])
-            with db_col1:
-                st.markdown("#### Exception Breakdown by Field")
-                if exc_df.empty:
-                    st.success("🎉 No exceptions found! All listings are clean.")
-                else:
-                    field_counts = exc_df["Field"].value_counts().reset_index()
-                    field_counts.columns = ["QC Field", "Issues Count"]
-                    st.dataframe(field_counts, use_container_width=True, hide_index=True)
-                    
-                    st.markdown("#### Severity Summary")
-                    sev_counts = exc_df["Severity"].value_counts().reset_index()
-                    sev_counts.columns = ["Severity", "Issues Count"]
-                    st.dataframe(sev_counts, use_container_width=True, hide_index=True)
+            container_dashboard = st.container()
+            container_live = None
 
-            with db_col2:
-                st.markdown("#### Validated Dataset Preview")
-                preview_df = val_df.copy()
-                target_headers = {
-                    "sku": "Seller SKU",
-                    "article_number": "Article No",
-                    "Zeocm Status": "Zeocm Status",
-                    "launch_date": "Launch Date",
-                    "gender": "Gender",
-                    "product_name": "Product Name",
-                    "Gender Check": "Gender Check",
-                    "color_name": "Color Name",
-                    "ref_color_name": "Reference Color Name",
-                    "Color Check": "Color Check",
-                    "size": "Size",
-                    "ref_size": "Reference Size",
-                    "Size Check": "Size Check",
-                    "price": "RRP",
-                    "ref_rrp": "Reference RRP",
-                    "RRP Check": "RRP Check",
-                    "quantity": "Quantity"
-                }
-                for col in target_headers.keys():
-                    if col not in preview_df.columns:
-                        preview_df[col] = ""
-                ordered_cols = list(target_headers.keys())
-                preview_df = preview_df[ordered_cols]
-                preview_df = preview_df.rename(columns=target_headers)
-                st.dataframe(preview_df.head(500), use_container_width=True, hide_index=True)
-                
+        with container_dashboard:
+            # Build Checklist Metrics
+            # 1. zEcom Status check
+            no_status_count = sum(val_df["Zeocm Status"] != "Yes")
+            status_ok = no_status_count == 0
+            status_badge = '<span class="qc-status-ok">OK</span>' if status_ok else '<span class="qc-status-mismatch">Mismatch</span>'
+            status_text = "Yes for all articles" if status_ok else f"{no_status_count} records are 'No' or 'Not Found'"
+            
+            # 2. Launch Date check
+            launch_excs = exc_df[exc_df["Field"] == "Launch Date"] if not exc_df.empty else pd.DataFrame()
+            launch_ok = launch_excs.empty
+            launch_badge = '<span class="qc-status-ok">OK</span>' if launch_ok else '<span class="qc-status-mismatch">Mismatch</span>'
+            launch_text = "All launch dates are past/current" if launch_ok else f"{len(launch_excs)} future launch dates flagged"
+            
+            # 3. Gender check
+            gender_excs = exc_df[exc_df["Field"] == "Gender"] if not exc_df.empty else pd.DataFrame()
+            gender_ok = gender_excs.empty
+            gender_badge = '<span class="qc-status-ok">OK</span>' if gender_ok else '<span class="qc-status-mismatch">Mismatch</span>'
+            gender_text = "All genders compatible" if gender_ok else f"{len(gender_excs)} gender mismatches found"
+            
+            # 4. Color Name check
+            color_excs = exc_df[exc_df["Field"] == "Color Name"] if not exc_df.empty else pd.DataFrame()
+            color_ok = color_excs.empty
+            color_badge = '<span class="qc-status-ok">OK</span>' if color_ok else '<span class="qc-status-mismatch">Mismatch</span>'
+            color_text = "All color names match Content file" if color_ok else f"{len(color_excs)} color mismatches found"
+            
+            # 5. Size check
+            size_excs = exc_df[exc_df["Field"] == "Size"] if not exc_df.empty else pd.DataFrame()
+            size_ok = size_excs.empty
+            size_badge = '<span class="qc-status-ok">OK</span>' if size_ok else '<span class="qc-status-mismatch">Mismatch</span>'
+            size_text = "All sizes match Content file references" if size_ok else f"{len(size_excs)} size mismatches found"
+            
+            # 6. Price Check
+            price_excs = exc_df[exc_df["Field"] == "Price"] if not exc_df.empty else pd.DataFrame()
+            price_ok = price_excs.empty
+            price_badge = '<span class="qc-status-ok">OK</span>' if price_ok else '<span class="qc-status-mismatch">Mismatch</span>'
+            price_text = "All prices match zEcom RRP" if price_ok else f"{len(price_excs)} price mismatches found"
+            
+            # 7. Quantity check
+            qty_excs = exc_df[exc_df["Field"] == "Quantity"] if not exc_df.empty else pd.DataFrame()
+            qty_ok = qty_excs.empty
+            qty_badge = '<span class="qc-status-ok">OK</span>' if qty_ok else '<span class="qc-status-mismatch">Mismatch</span>'
+            qty_text = "Quantity is 0 for all items" if qty_ok else f"{len(qty_excs)} non-zero quantity items found"
+            
+            # Build QC Table HTML
+            qc_table_html = f"""
+            <table class="qc-table">
+                <thead>
+                    <tr>
+                        <th>Check Name</th>
+                        <th>Target Condition</th>
+                        <th>Actual Status</th>
+                        <th style="text-align: center; width: 120px;">Result</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td style="font-weight: 600;">zEcom Status Check</td>
+                        <td>Should be 'Yes' for all articles</td>
+                        <td>{status_text}</td>
+                        <td style="text-align: center;">{status_badge}</td>
+                    </tr>
+                    <tr>
+                        <td style="font-weight: 600;">Launch Date Check</td>
+                        <td>Should not be in the future</td>
+                        <td>{launch_text}</td>
+                        <td style="text-align: center;">{launch_badge}</td>
+                    </tr>
+                    <tr>
+                        <td style="font-weight: 600;">Gender Mismatch Check</td>
+                        <td>Matches Content file gender reference</td>
+                        <td>{gender_text}</td>
+                        <td style="text-align: center;">{gender_badge}</td>
+                    </tr>
+                    <tr>
+                        <td style="font-weight: 600;">Color Name Check</td>
+                        <td>Matches Content file Color Name reference</td>
+                        <td>{color_text}</td>
+                        <td style="text-align: center;">{color_badge}</td>
+                    </tr>
+                    <tr>
+                        <td style="font-weight: 600;">Size Check</td>
+                        <td>Matches Content size (UK/US/Rus) reference</td>
+                        <td>{size_text}</td>
+                        <td style="text-align: center;">{size_badge}</td>
+                    </tr>
+                    <tr>
+                        <td style="font-weight: 600;">Price Check</td>
+                        <td>Matches zEcom RRP reference price</td>
+                        <td>{price_text}</td>
+                        <td style="text-align: center;">{price_badge}</td>
+                    </tr>
+                    <tr>
+                        <td style="font-weight: 600;">Quantity Check</td>
+                        <td>Quantity must be exactly 0 for all items</td>
+                        <td>{qty_text}</td>
+                        <td style="text-align: center;">{qty_badge}</td>
+                    </tr>
+                </tbody>
+            </table>
+            """
+            
+            st.markdown("### 📋 QC Quality Checklist")
+            st.markdown(qc_table_html, unsafe_allow_html=True)
+            
+            st.markdown("### 🔍 Validated Dataset Preview")
+            preview_df = val_df.copy()
+            target_headers = {
+                "sku": "Seller SKU",
+                "article_number": "Article No",
+                "Zeocm Status": "Zeocm Status",
+                "launch_date": "Launch Date",
+                "gender": "Gender",
+                "product_name": "Product Name",
+                "Gender Check": "Gender Check",
+                "color_name": "Color Name",
+                "ref_color_name": "Reference Color Name",
+                "Color Check": "Color Check",
+                "size": "Size",
+                "ref_size": "Reference Size",
+                "Size Check": "Size Check",
+                "price": "RRP",
+                "ref_rrp": "Reference RRP",
+                "RRP Check": "RRP Check",
+                "quantity": "Quantity"
+            }
+            for col in target_headers.keys():
+                if col not in preview_df.columns:
+                    preview_df[col] = ""
+            ordered_cols = list(target_headers.keys())
+            preview_df = preview_df[ordered_cols]
+            preview_df = preview_df.rename(columns=target_headers)
+            st.dataframe(preview_df.head(500), use_container_width=True, hide_index=True)
+            
             st.markdown("#### 📥 Download Validation Reports")
             excel_data = generate_qc_excel_report(val_df, exc_df, qc_stage)
             
@@ -502,29 +581,8 @@ if target_loaded:
                     use_container_width=True
                 )
 
-        with tab_exceptions:
-            st.markdown("#### ❌ Flagged Exceptions & Warnings")
-            if exc_df.empty:
-                st.success("🎉 All checkmarks passed! No errors or warnings identified.")
-            else:
-                filter_cols = st.columns(3)
-                with filter_cols[0]:
-                    sel_severity = st.multiselect("Filter Severity", options=exc_df["Severity"].unique().tolist(), default=exc_df["Severity"].unique().tolist())
-                with filter_cols[1]:
-                    sel_field = st.multiselect("Filter Field", options=exc_df["Field"].unique().tolist(), default=exc_df["Field"].unique().tolist())
-                with filter_cols[2]:
-                    sel_file = st.multiselect("Filter Source File", options=exc_df["Source File"].unique().tolist(), default=exc_df["Source File"].unique().tolist())
-                
-                filtered_exc = exc_df[
-                    exc_df["Severity"].isin(sel_severity) & 
-                    exc_df["Field"].isin(sel_field) & 
-                    exc_df["Source File"].isin(sel_file)
-                ]
-                st.markdown(f"Displaying **{len(filtered_exc)}** of **{len(exc_df)}** exceptions:")
-                st.dataframe(filtered_exc, use_container_width=True, hide_index=True)
-
-        if tab_live_compare is not None:
-            with tab_live_compare:
+        if container_live is not None:
+            with container_live:
                 st.markdown("#### 🔄 Live Store Listing Sync Audit")
                 st.markdown(f"Compare your uploaded listing sheet against live store data.")
                 
@@ -668,15 +726,3 @@ if target_loaded:
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                             use_container_width=True
                         )
-
-        with tab_logs:
-            st.markdown("#### 📜 Validation Execution Audit Log")
-            log_str = "\n".join(logs)
-            st.markdown(f'<div class="log-box">{log_str.replace(chr(10), "<br>")}</div>', unsafe_allow_html=True)
-            
-            st.download_button(
-                label="📥 Download Text Logs",
-                data=log_str,
-                file_name=f"QC_Validation_Logs_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
-                mime="text/plain"
-            )
