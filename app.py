@@ -22,7 +22,8 @@ from utils.file_loaders import (
     CANONICAL_LABELS,
     load_content,
     load_zecom,
-    _safe_str
+    _safe_str,
+    load_excel_all_sheets
 )
 from utils.validators import (
     validate_dataframe, 
@@ -133,61 +134,77 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown("### Upload Target Listings Sheet")
-    input_mode = st.radio(
-        "Upload Sheet Mode",
-        ["File Upload (Excel/CSV)", "Google Sheets Link"]
-    )
     
     upload_dfs = {}
-    if input_mode == "File Upload (Excel/CSV)":
-        if "gsheet_error" in st.session_state:
-            del st.session_state["gsheet_error"]
-        uploaded_files = st.file_uploader(
-            "Upload Target Sheet",
-            type=["xlsx", "xls", "csv"],
-            accept_multiple_files=True,
-            key="target_uploader"
-        )
-        if uploaded_files:
-            for f in uploaded_files:
-                try:
+    
+    # 1. Local files upload
+    uploaded_files = st.file_uploader(
+        "Upload Target Sheets (Excel/CSV)",
+        type=["xlsx", "xls", "csv"],
+        accept_multiple_files=True,
+        key="target_uploader"
+    )
+    if uploaded_files:
+        for f in uploaded_files:
+            try:
+                if f.name.lower().endswith((".xlsx", ".xls")):
+                    sheets_dict = load_excel_all_sheets(f)
+                    for s_name, df in sheets_dict.items():
+                        upload_dfs[f"{f.name} - {s_name}"] = df
+                else:
                     df = load_file_to_df(f)
                     upload_dfs[f.name] = df
-                except Exception as e:
-                    st.error(f"Error loading target file {f.name}: {e}")
+            except Exception as e:
+                st.error(f"Error loading target file {f.name}: {e}")
+                
+    # 2. Google Sheets links
+    import re
+    st.markdown("---")
+    gsheet_urls_str = st.text_area(
+        "Google Sheets Share Links (One URL per line)",
+        placeholder="https://docs.google.com/spreadsheets/d/...\nhttps://docs.google.com/spreadsheets/d/...",
+        key="gsheet_urls_area"
+    )
+    if not gsheet_urls_str.strip():
+        if "gsheet_error" in st.session_state:
+            del st.session_state["gsheet_error"]
     else:
-        gsheet_url = st.text_input(
-            "Google Sheets Share Link",
-            placeholder="https://docs.google.com/spreadsheets/d/..."
-        )
-        if not gsheet_url:
-            if "gsheet_error" in st.session_state:
-                del st.session_state["gsheet_error"]
-        else:
+        gsheet_urls = [url.strip() for url in gsheet_urls_str.split("\n") if url.strip()]
+        errors = []
+        private_error_found = False
+        for i, url in enumerate(gsheet_urls):
             try:
-                with st.spinner("Downloading Google Sheet..."):
-                    df = load_google_sheet(gsheet_url)
-                    upload_dfs["Google Sheet"] = df
-                    if "gsheet_error" in st.session_state:
-                        del st.session_state["gsheet_error"]
+                with st.spinner(f"Downloading Google Sheet #{i+1}..."):
+                    df = load_google_sheet(url)
+                    id_match = re.search(r"/d/([a-zA-Z0-9-_]+)", url)
+                    display_name = f"Google Sheet ({id_match.group(1)[:8]}...)" if id_match else f"Google Sheet #{i+1}"
+                    upload_dfs[display_name] = df
             except Exception as e:
                 err_str = str(e)
-                st.session_state["gsheet_error"] = err_str
+                errors.append(f"Sheet #{i+1}: {err_str}")
                 if "401" in err_str or "unauthorized" in err_str.lower() or "forbidden" in err_str.lower() or "403" in err_str:
-                    st.error("""
-                    🔒 **Private Google Sheet detected (HTTP 401/403):**
-                    
-                    The app does not have permission to fetch this private sheet.
-                    
-                    **To resolve this:**
-                    1. In your Google Sheet, click the blue **Share** button in the top right.
-                    2. Under *General Access*, change it from *Restricted* to **"Anyone with the link can view"** (Viewer access).
-                    3. Copy the new link and paste it here.
-                    
-                    *Alternatively:* Go to Google Sheets ➔ **File** ➔ **Download** ➔ **Microsoft Excel (.xlsx)** or **Comma Separated Values (.csv)**, and upload it using the **FILE UPLOAD** mode above.
-                    """)
-                else:
-                    st.error(f"Failed to fetch sheet: {e}. Check if sharing settings are set to public 'Anyone with the link'.")
+                    private_error_found = True
+        
+        if errors:
+            st.session_state["gsheet_error"] = " | ".join(errors)
+            if private_error_found:
+                st.error("""
+                🔒 **Private Google Sheet detected (HTTP 401/403):**
+                
+                One or more Google Sheets do not have permission to be fetched.
+                
+                **To resolve this:**
+                1. In your Google Sheet, click the blue **Share** button in the top right.
+                2. Under *General Access*, change it from *Restricted* to **"Anyone with the link can view"** (Viewer access).
+                3. Copy the new link and paste it here.
+                
+                *Alternatively:* Go to Google Sheets ➔ **File** ➔ **Download** ➔ **Microsoft Excel (.xlsx)** or **Comma Separated Values (.csv)**, and upload it using the Upload Target Sheets (Excel/CSV) section above.
+                """)
+            else:
+                st.error(f"❌ **Error downloading Google Sheet(s):**\n" + "\n".join([f"- {err}" for err in errors]))
+        else:
+            if "gsheet_error" in st.session_state:
+                del st.session_state["gsheet_error"]
 
     with st.expander("Genders & Statuses Config"):
         custom_genders_str = st.text_input(
@@ -288,7 +305,7 @@ if show_setup_dashboard:
             2. Under *General Access*, change it from *Restricted* to **"Anyone with the link can view"** (Viewer access).
             3. Copy the new link and paste it in the sidebar.
             
-            *Alternatively:* Go to Google Sheets ➔ **File** ➔ **Download** ➔ **Microsoft Excel (.xlsx)** or **Comma Separated Values (.csv)**, and upload it using the **FILE UPLOAD** mode in the sidebar.
+            *Alternatively:* Go to Google Sheets ➔ **File** ➔ **Download** ➔ **Microsoft Excel (.xlsx)** or **Comma Separated Values (.csv)**, and upload it using the Upload Target Sheets (Excel/CSV) section in the sidebar.
             
             **Raw Error:** `{gsheet_error}`
             """)
