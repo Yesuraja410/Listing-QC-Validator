@@ -433,37 +433,43 @@ if target_loaded:
             launch_excs = exc_df[exc_df["Field"] == "Launch Date"] if not exc_df.empty else pd.DataFrame()
             launch_ok = launch_excs.empty
             launch_badge = '<span class="qc-status-ok">OK</span>' if launch_ok else '<span class="qc-status-mismatch">Mismatch</span>'
-            launch_text = "All launch dates are past/current" if launch_ok else f"{len(launch_excs)} future launch dates flagged"
+            launch_rows = launch_excs.groupby(["Source File", "Row Number"]).ngroups if not launch_ok else 0
+            launch_text = "All launch dates are past/current" if launch_ok else f"{launch_rows} future launch dates flagged"
             
             # 3. Gender check
             gender_excs = exc_df[exc_df["Field"] == "Gender"] if not exc_df.empty else pd.DataFrame()
             gender_ok = gender_excs.empty
             gender_badge = '<span class="qc-status-ok">OK</span>' if gender_ok else '<span class="qc-status-mismatch">Mismatch</span>'
-            gender_text = "All genders compatible" if gender_ok else f"{len(gender_excs)} gender mismatches found"
+            gender_rows = gender_excs.groupby(["Source File", "Row Number"]).ngroups if not gender_ok else 0
+            gender_text = "All genders compatible" if gender_ok else f"{gender_rows} gender mismatches found"
             
             # 4. Color Name check
             color_excs = exc_df[exc_df["Field"] == "Color Name"] if not exc_df.empty else pd.DataFrame()
             color_ok = color_excs.empty
             color_badge = '<span class="qc-status-ok">OK</span>' if color_ok else '<span class="qc-status-mismatch">Mismatch</span>'
-            color_text = "All color names match Content file" if color_ok else f"{len(color_excs)} color mismatches found"
+            color_rows = color_excs.groupby(["Source File", "Row Number"]).ngroups if not color_ok else 0
+            color_text = "All color names match Content file" if color_ok else f"{color_rows} color mismatches found"
             
             # 5. Size check
             size_excs = exc_df[exc_df["Field"] == "Size"] if not exc_df.empty else pd.DataFrame()
             size_ok = size_excs.empty
             size_badge = '<span class="qc-status-ok">OK</span>' if size_ok else '<span class="qc-status-mismatch">Mismatch</span>'
-            size_text = "All sizes match Content file references" if size_ok else f"{len(size_excs)} size mismatches found"
+            size_rows = size_excs.groupby(["Source File", "Row Number"]).ngroups if not size_ok else 0
+            size_text = "All sizes match Content file references" if size_ok else f"{size_rows} size mismatches found"
             
             # 6. Price Check
             price_excs = exc_df[exc_df["Field"] == "Price"] if not exc_df.empty else pd.DataFrame()
             price_ok = price_excs.empty
             price_badge = '<span class="qc-status-ok">OK</span>' if price_ok else '<span class="qc-status-mismatch">Mismatch</span>'
-            price_text = "All prices match zEcom RRP" if price_ok else f"{len(price_excs)} price mismatches found"
+            price_rows = price_excs.groupby(["Source File", "Row Number"]).ngroups if not price_ok else 0
+            price_text = "All prices match zEcom RRP" if price_ok else f"{price_rows} price mismatches found"
             
             # 7. Quantity check
             qty_excs = exc_df[exc_df["Field"] == "Quantity"] if not exc_df.empty else pd.DataFrame()
             qty_ok = qty_excs.empty
             qty_badge = '<span class="qc-status-ok">OK</span>' if qty_ok else '<span class="qc-status-mismatch">Mismatch</span>'
-            qty_text = "Quantity is 0 for all items" if qty_ok else f"{len(qty_excs)} non-zero quantity items found"
+            qty_rows = qty_excs.groupby(["Source File", "Row Number"]).ngroups if not qty_ok else 0
+            qty_text = "Quantity is 0 for all items" if qty_ok else f"{qty_rows} non-zero quantity items found"
             
             # Build QC Table HTML
             qc_table_html = f"""
