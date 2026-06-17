@@ -403,17 +403,13 @@ if target_loaded:
         total_articles = val_df["article_number"].nunique() if "article_number" in val_df.columns else 0
         total_exceptions = len(exc_df) if not exc_df.empty else 0
         
-        kpi_cols = st.columns(4)
+        kpi_cols = st.columns(3)
         with kpi_cols[0]:
             st.markdown(f'<div class="metric-card metric-total"><div class="metric-title">Total Rows Audited</div><div class="metric-value">{total_records}</div></div>', unsafe_allow_html=True)
         with kpi_cols[1]:
             st.markdown(f'<div class="metric-card metric-passed" style="border-left-color: #38bdf8 !important;"><div class="metric-title" style="color: #38bdf8 !important;">Total Unique SKUs</div><div class="metric-value" style="color: #38bdf8 !important;">{total_skus}</div></div>', unsafe_allow_html=True)
         with kpi_cols[2]:
             st.markdown(f'<div class="metric-card metric-warnings" style="border-left-color: #a78bfa !important;"><div class="metric-title" style="color: #a78bfa !important;">Total Unique Articles</div><div class="metric-value" style="color: #a78bfa !important;">{total_articles}</div></div>', unsafe_allow_html=True)
-        with kpi_cols[3]:
-            ex_color = "#f87171" if total_exceptions > 0 else "#34d399"
-            ex_border = "#ef4444" if total_exceptions > 0 else "#10b981"
-            st.markdown(f'<div class="metric-card metric-failed" style="border-left-color: {ex_border} !important;"><div class="metric-title" style="color: {ex_color} !important;">Errors & Warnings</div><div class="metric-value" style="color: {ex_color} !important;">{total_exceptions}</div></div>', unsafe_allow_html=True)
             
         # Create containers/tabs depending on QC stage
         if qc_stage == "Post QC":
@@ -562,25 +558,13 @@ if target_loaded:
             st.markdown("#### 📥 Download Validation Reports")
             excel_data = generate_qc_excel_report(val_df, exc_df, qc_stage)
             
-            c1, c2 = st.columns(2)
-            with c1:
-                st.download_button(
-                    label="📥 Download Detailed Excel QC Report",
-                    data=excel_data,
-                    file_name=f"Listing_QC_Report_{qc_stage}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True
-                )
-            with c2:
-                csv_buffer = io.StringIO()
-                exc_df.to_csv(csv_buffer, index=False)
-                st.download_button(
-                    label="📥 Download Exceptions CSV",
-                    data=csv_buffer.getvalue(),
-                    file_name=f"QC_Exceptions_{qc_stage}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                    mime="text/csv",
-                    use_container_width=True
-                )
+            st.download_button(
+                label="📥 Download Detailed Excel QC Report",
+                data=excel_data,
+                file_name=f"Listing_QC_Report_{qc_stage}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
 
         if container_live is not None:
             with container_live:
