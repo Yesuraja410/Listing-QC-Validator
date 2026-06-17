@@ -23,7 +23,8 @@ from utils.file_loaders import (
     load_content,
     load_zecom,
     _safe_str,
-    load_excel_all_sheets
+    load_excel_all_sheets,
+    process_live_files
 )
 from utils.validators import (
     validate_dataframe, 
@@ -115,21 +116,15 @@ with st.sidebar:
     )
     
     # 3. Post QC Channel Marketplace Files
-    live_file_gen = None
-    live_file_media = None
-    
+    live_files = []
     if qc_stage == "Post QC":
         st.markdown("---")
-        st.markdown("### Upload Live Marketplace Files")
-        live_file_gen = st.file_uploader(
-            "1. Upload Live Listings (General QC Check: Status, Price, Stock)",
+        st.markdown("### Upload Live Marketplace Reports")
+        live_files = st.file_uploader(
+            "Upload Live Reports (Excel, CSV, or ZIP)",
             type=["xlsx", "xls", "csv", "zip"],
-            key="live_gen"
-        )
-        live_file_media = st.file_uploader(
-            "2. Upload Live Listings (Media Check: Images & Size Chart)",
-            type=["xlsx", "xls", "csv", "zip"],
-            key="live_media"
+            accept_multiple_files=True,
+            key="live_reports"
         )
 
     st.markdown("---")
@@ -595,115 +590,36 @@ if target_loaded:
         if container_live is not None:
             with container_live:
                 st.markdown("#### 🔄 Live Store Listing Sync Audit")
-                st.markdown(f"Compare your uploaded listing sheet against live store data.")
+                st.markdown("Compare your uploaded listing sheet against live store data.")
                 
-                if not live_file_gen and not live_file_media:
-                    st.info("💡 Please upload at least one Live listings file (General or Media Check) in the sidebar to run the sync audit.")
+                if not live_files:
+                    st.info("💡 Please upload Live marketplace files (Excel, CSV, or ZIP) in the sidebar to run the sync audit.")
                 else:
-                    live_general_df = pd.DataFrame()
-                    live_media_df = pd.DataFrame()
-                    
-                    if live_file_gen:
-                        try:
-                            live_general_df_raw = load_file_to_df(live_file_gen)
-                            st.success(f"✅ Loaded General Live file ({len(live_general_df_raw)} records)")
-                            
-                            live_gen_cols = live_general_df_raw.columns.tolist()
-                            live_gen_maps = auto_map_columns(live_gen_cols)
-                            
-                            with st.expander("Align Live General File Columns"):
-                                l_cols = st.columns(3)
-                                live_gen_mapping = {}
-                                
-                                gen_fields = ["sku", "ecommerce_status", "price", "quantity", "product_name"]
-                                for i, canonical in enumerate(gen_fields):
-                                    l_col_sel = l_cols[i % 3]
-                                    l_default_val = live_gen_maps.get(canonical)
-                                    l_options = ["-- Skip --"] + live_gen_cols
-                                    l_default_idx = 0
-                                    if l_default_val in live_gen_cols:
-                                        l_default_idx = l_options.index(l_default_val)
-                                    with l_col_sel:
-                                        l_mapped_col = st.selectbox(
-                                            f"Live {CANONICAL_LABELS[canonical]}",
-                                            options=l_options,
-                                            index=l_default_idx,
-                                            key=f"live_gen_map_{canonical}"
-                                        )
-                                        live_gen_mapping[canonical] = None if l_mapped_col == "-- Skip --" else l_mapped_col
-                                        
-                            live_general_df = standardize_dataframe(live_general_df_raw, live_gen_mapping, source_name="Live General")
-                        except Exception as e:
-                            st.error(f"Failed to load Live General file: {e}")
-                            
-                    if live_file_media:
-                        try:
-                            live_media_df_raw = load_file_to_df(live_file_media)
-                            st.success(f"✅ Loaded Images & Size Chart Live file ({len(live_media_df_raw)} records)")
-                            
-                            live_med_cols = live_media_df_raw.columns.tolist()
-                            live_med_maps = auto_map_columns(live_med_cols)
-                            
-                            with st.expander("Align Live Media File Columns"):
-                                l_cols = st.columns(3)
-                                live_med_mapping = {}
-                                
-                                med_fields = ["sku", "images", "size_chart"]
-                                for i, canonical in enumerate(med_fields):
-                                    l_col_sel = l_cols[i % 3]
-                                    l_default_val = live_med_maps.get(canonical)
-                                    l_options = ["-- Skip --"] + live_med_cols
-                                    l_default_idx = 0
-                                    if l_default_val in live_med_cols:
-                                        l_default_idx = l_options.index(l_default_val)
-                                    with l_col_sel:
-                                        l_mapped_col = st.selectbox(
-                                            f"Live {CANONICAL_LABELS[canonical]}",
-                                            options=l_options,
-                                            index=l_default_idx,
-                                            key=f"live_med_map_{canonical}"
-                                        )
-                                        live_med_mapping[canonical] = None if l_mapped_col == "-- Skip --" else l_mapped_col
-                                        
-                            live_media_df = standardize_dataframe(live_media_df_raw, live_med_mapping, source_name="Live Media")
-                        except Exception as e:
-                            st.error(f"Failed to load Live Media file: {e}")
-                            
                     if st.button("🔄 Execute Comparison Audit", type="primary", key="btn_run_compare"):
-                        with st.spinner("Consolidating live sheets and running comparison..."):
+                        with st.spinner("Consolidating live reports and running comparison..."):
                             try:
-                                if not live_general_df.empty and not live_media_df.empty:
-                                    media_clean = live_media_df.drop(columns=["_original_row_number", "_source_file"])
-                                    live_general_df["sku"] = live_general_df["sku"].astype(str).str.strip()
-                                    media_clean["sku"] = media_clean["sku"].astype(str).str.strip()
-                                    
-                                    consolidated_live = pd.merge(
-                                        live_general_df, 
-                                        media_clean, 
-                                        on="sku", 
-                                        how="outer"
-                                    )
-                                elif not live_general_df.empty:
-                                    consolidated_live = live_general_df
+                                consolidated_live = process_live_files(live_files, channel)
+                                if consolidated_live.empty:
+                                    st.error("Could not parse any valid listing data from the uploaded live files. Please verify the headers and formats.")
                                 else:
-                                    consolidated_live = live_media_df
+                                    st.success(f"✅ Successfully loaded and consolidated {len(consolidated_live)} live listing variants.")
                                     
-                                standardized_source = val_df.copy()
-                                
-                                comp_df, comp_metrics = compare_source_and_live(
-                                    standardized_source,
-                                    consolidated_live,
-                                    match_column="sku"
-                                )
-                                
-                                st.session_state.comp_df = comp_df
-                                st.session_state.comp_metrics = comp_metrics
-                                st.session_state.ran_comparison = True
+                                    standardized_source = val_df.copy()
+                                    
+                                    comp_df, comp_metrics = compare_source_and_live(
+                                        standardized_source,
+                                        consolidated_live,
+                                        match_column="sku"
+                                    )
+                                    
+                                    st.session_state.comp_df = comp_df
+                                    st.session_state.comp_metrics = comp_metrics
+                                    st.session_state.ran_comparison = True
                             except Exception as e:
                                 st.error(f"Comparison run failed: {e}")
                                 import traceback
                                 st.error(traceback.format_exc())
-                            
+                                
                     if st.session_state.ran_comparison:
                         st.markdown("---")
                         st.markdown("##### Comparison Summary")
