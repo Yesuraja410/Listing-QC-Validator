@@ -969,7 +969,7 @@ def compare_source_and_live(source_df: pd.DataFrame, live_df: pd.DataFrame, matc
     missing_in_live = 0
     missing_in_source = 0
     
-    fields_to_compare = ["price", "quantity", "ecommerce_status", "product_name", "images", "size_chart"]
+    fields_to_compare = ["price", "quantity", "ecommerce_status", "product_name", "color_name", "images", "size_chart"]
     
     for key in all_keys:
         in_source = key in src_grouped.index
@@ -1009,7 +1009,13 @@ def compare_source_and_live(source_df: pd.DataFrame, live_df: pd.DataFrame, matc
                     l_val = live_row[live_field]
                     
                     is_diff = False
-                    if field in ["price", "quantity"]:
+                    if field == "color_name":
+                        s_c = str(s_val).strip().lower() if pd.notna(s_val) else ""
+                        l_c = str(l_val).strip().lower() if pd.notna(l_val) else ""
+                        is_diff = (s_c != l_c) and (s_c not in l_c) and (l_c not in s_c) if s_c and l_c else (s_c != l_c)
+                    elif field == "ecommerce_status":
+                        is_diff = _normalise_status(s_val) != _normalise_status(l_val)
+                    elif field in ["price", "quantity"]:
                         try:
                             s_f = float(re.sub(r'[^\d\.]', '', str(s_val))) if s_val else 0.0
                             l_f = float(re.sub(r'[^\d\.]', '', str(l_val))) if l_val else 0.0
@@ -1017,7 +1023,7 @@ def compare_source_and_live(source_df: pd.DataFrame, live_df: pd.DataFrame, matc
                         except (ValueError, TypeError):
                             is_diff = str(s_val).strip().lower() != str(l_val).strip().lower()
                     else:
-                        is_diff = _normalise_status(s_val) != _normalise_status(l_val) if field == "ecommerce_status" else clean_str(s_val).lower() != clean_str(l_val).lower()
+                        is_diff = clean_str(s_val).lower() != clean_str(l_val).lower()
                         
                     if is_diff:
                         row_mismatches.append(field)
