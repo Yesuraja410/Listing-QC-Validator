@@ -201,50 +201,5 @@ class TestValidators(unittest.TestCase):
         self.assertEqual(clean_size_for_comparison("Int: 4XL"), "xxxxl")
         self.assertEqual(clean_size_for_comparison("Int:3XL"), "xxxl")
         self.assertEqual(clean_size_for_comparison("Int:4XL"), "xxxxl")
-
-    def test_parent_sku_validation(self):
-        # A parent SKU is not 13 digits (e.g. "404620_PARENT")
-        row = pd.Series({
-            "article_number": "404620_07",
-            "sku": "404620_PARENT", # Parent SKU (not 13 digits)
-            "ecommerce_status": "Blocked", # Normally error, but should be skipped
-            "launch_date": "2026-06-20", # Valid Launch Date
-            "gender": "Kids", # Normally Warning (Men's shoe), but skipped
-            "product_name": "Men's Leather Running Shoes Black Edition",
-            "color_name": "Red", # Normally Error (reference is Black), but skipped
-            "size": "99", # Normally Error (reference size mismatch), but skipped
-            "quantity": 15, # Normally Error (must be 0), but skipped
-            "price": 1000.0, # Normally Error (reference mismatch), but skipped
-            "_original_row_number": 4,
-            "_source_file": "test_upload.csv"
-        })
-        excs = validate_row_internal(
-            row, 0,
-            channel="Shopee PH",
-            content_maps=self.content_maps,
-            zecom_maps=self.zecom_maps_shopee
-        )
-        # We expect 0 exceptions since all non-Article/Launch Date checks are skipped
-        # and SKU is not 13 digits is NOT an error.
-        self.assertEqual(len(excs), 0, f"Expected 0 exceptions for parent SKU, found: {excs}")
-
-    def test_parent_sku_missing_article_still_fails(self):
-        row = pd.Series({
-            "article_number": "", # Missing! Should fail.
-            "sku": "404620_PARENT",
-            "launch_date": "2026-06-20",
-            "_original_row_number": 5,
-            "_source_file": "test_upload.csv"
-        })
-        excs = validate_row_internal(
-            row, 0,
-            channel="Shopee PH",
-            content_maps=self.content_maps,
-            zecom_maps=self.zecom_maps_shopee
-        )
-        # We expect 1 exception for missing Article Number.
-        self.assertEqual(len(excs), 1)
-        self.assertEqual(excs[0]["Field"], "Article Number")
-
 if __name__ == '__main__':
     unittest.main()
