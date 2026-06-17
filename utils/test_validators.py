@@ -197,6 +197,10 @@ class TestValidators(unittest.TestCase):
         self.assertEqual(clean_size_for_comparison("8 yrs-y"), "8")
         self.assertEqual(clean_size_for_comparison("8 yrs"), "8")
         self.assertEqual(clean_size_for_comparison("8y"), "8")
+        self.assertEqual(clean_size_for_comparison("Int: 3XL"), "xxxl")
+        self.assertEqual(clean_size_for_comparison("Int: 4XL"), "xxxxl")
+        self.assertEqual(clean_size_for_comparison("Int:3XL"), "xxxl")
+        self.assertEqual(clean_size_for_comparison("Int:4XL"), "xxxxl")
 
 if __name__ == '__main__':
     unittest.main()
