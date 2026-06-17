@@ -228,9 +228,9 @@ class TestValidators(unittest.TestCase):
         # and SKU is not 13 digits is NOT an error.
         self.assertEqual(len(excs), 0, f"Expected 0 exceptions for parent SKU, found: {excs}")
 
-    def test_parent_sku_missing_article_still_fails(self):
+    def test_parent_sku_missing_article_ignored(self):
         row = pd.Series({
-            "article_number": "", # Missing! Should fail.
+            "article_number": "", # Missing! Should be ignored for Parent SKU.
             "sku": "404620_PARENT",
             "launch_date": "2026-06-20",
             "_original_row_number": 5,
@@ -242,9 +242,8 @@ class TestValidators(unittest.TestCase):
             content_maps=self.content_maps,
             zecom_maps=self.zecom_maps_shopee
         )
-        # We expect 1 exception for missing Article Number.
-        self.assertEqual(len(excs), 1)
-        self.assertEqual(excs[0]["Field"], "Article Number")
+        # We expect 0 exceptions since parent SKU validations are ignored.
+        self.assertEqual(len(excs), 0, f"Expected 0 exceptions, found: {excs}")
 
 if __name__ == '__main__':
     unittest.main()
