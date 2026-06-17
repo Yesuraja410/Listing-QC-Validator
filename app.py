@@ -148,11 +148,11 @@ with st.sidebar:
         for f in uploaded_files:
             try:
                 if f.name.lower().endswith((".xlsx", ".xls")):
-                    sheets_dict = load_excel_all_sheets(f)
+                    sheets_dict = load_excel_all_sheets(f, channel=channel)
                     for s_name, df in sheets_dict.items():
                         upload_dfs[f"{f.name} - {s_name}"] = df
                 else:
-                    df = load_file_to_df(f)
+                    df = load_file_to_df(f, channel=channel)
                     upload_dfs[f.name] = df
             except Exception as e:
                 st.error(f"Error loading target file {f.name}: {e}")
@@ -175,7 +175,7 @@ with st.sidebar:
         for i, url in enumerate(gsheet_urls):
             try:
                 with st.spinner(f"Downloading Google Sheet #{i+1}..."):
-                    df = load_google_sheet(url)
+                    df = load_google_sheet(url, channel=channel)
                     id_match = re.search(r"/d/([a-zA-Z0-9-_]+)", url)
                     display_name = f"Google Sheet ({id_match.group(1)[:8]}...)" if id_match else f"Google Sheet #{i+1}"
                     upload_dfs[display_name] = df
