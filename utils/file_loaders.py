@@ -224,7 +224,16 @@ def load_excel_all_sheets(file_or_path, channel: str = None) -> dict:
             
         sheet_dfs = {}
         h, s = get_parse_params(channel)
-        for s_name in xl.sheet_names:
+        
+        sheet_names_to_parse = xl.sheet_names
+        if channel:
+            channel_lower = channel.lower()
+            if "zalora" in channel_lower:
+                sheet_names_to_parse = [name for name in xl.sheet_names if name.strip().lower() == "upload template"]
+            elif "tiktok" in channel_lower:
+                sheet_names_to_parse = [name for name in xl.sheet_names if name.strip().lower() == "template"]
+                
+        for s_name in sheet_names_to_parse:
             df = pd.DataFrame()
             try:
                 df = xl.parse(s_name, header=h, skiprows=s, dtype=str)
