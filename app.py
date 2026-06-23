@@ -606,10 +606,21 @@ if target_loaded:
                                     
                                     standardized_source = val_df.copy()
                                     
+                                    # Get reference files if available in session/variables
+                                    content_df_ref = None
+                                    zecom_df_ref = None
+                                    if content_file:
+                                        content_df_ref = content_df
+                                    if zecom_file:
+                                        zecom_df_ref = zecom_df
+                                        
                                     comp_df, comp_metrics = compare_source_and_live(
                                         standardized_source,
                                         consolidated_live,
-                                        match_column="sku"
+                                        match_column="sku",
+                                        content_df=content_df_ref,
+                                        zecom_df=zecom_df_ref,
+                                        channel=channel
                                     )
                                     
                                     st.session_state.comp_df = comp_df
@@ -635,6 +646,134 @@ if target_loaded:
                         for idx in range(len(labels)):
                             with c_kpis[idx]:
                                 st.markdown(f'<div class="metric-card" style="border-top: 4px solid {theme_colors[idx]};"><div class="metric-title">{labels[idx]}</div><div class="metric-value" style="color: {theme_colors[idx]};">{vals[idx]}</div></div>', unsafe_allow_html=True)
+                        
+                        # Render Live Store In-sync Checklist Grid
+                        if "zEcom Status Check" in comp_df.columns:
+                            # 1. zEcom Status Check
+                            zec_fails = sum((comp_df["zEcom Status Check"] != "Yes") & (comp_df["zEcom Status Check"] != "-") & (comp_df["zEcom Status Check"] != ""))
+                            zec_ok = zec_fails == 0
+                            zec_badge = '<span class="qc-status-ok">OK</span>' if zec_ok else '<span class="qc-status-mismatch">Mismatch</span>'
+                            zec_text = "All live SKU statuses match zEcom tracker" if zec_ok else f"{zec_fails} SKU statuses do not match or are not found"
+                            
+                            # 2. Launch Date Check
+                            ld_fails = sum(comp_df["Launch Date Check"] == "Mismatch")
+                            ld_ok = ld_fails == 0
+                            ld_badge = '<span class="qc-status-ok">OK</span>' if ld_ok else '<span class="qc-status-mismatch">Mismatch</span>'
+                            ld_text = "All live products launched correctly" if ld_ok else f"{ld_fails} products have future launch dates in tracker"
+                            
+                            # 3. Gender Mismatch Check
+                            gd_fails = sum((comp_df["Gender Check"] != "OK") & (comp_df["Gender Check"] != "-"))
+                            gd_ok = gd_fails == 0
+                            gd_badge = '<span class="qc-status-ok">OK</span>' if gd_ok else '<span class="qc-status-mismatch">Mismatch</span>'
+                            gd_text = "No gender mismatch keywords in names" if gd_ok else f"{gd_fails} product name gender conflicts detected"
+                            
+                            # 4. Color Check
+                            col_fails = sum((comp_df["Color Check"] != "OK") & (comp_df["Color Check"] != "-"))
+                            col_ok = col_fails == 0
+                            col_badge = '<span class="qc-status-ok">OK</span>' if col_ok else '<span class="qc-status-mismatch">Mismatch</span>'
+                            col_text = "All live product colors match Content file" if col_ok else f"{col_fails} color mismatches found"
+                            
+                            # 5. Size Check
+                            sz_fails = sum((comp_df["Size Check"] != "OK") & (comp_df["Size Check"] != "-"))
+                            sz_ok = sz_fails == 0
+                            sz_badge = '<span class="qc-status-ok">OK</span>' if sz_ok else '<span class="qc-status-mismatch">Mismatch</span>'
+                            sz_text = "All live sizes match Content file reference" if sz_ok else f"{sz_fails} size mismatches found"
+                            
+                            # 6. Price Check (RRP Check)
+                            prc_fails = sum((comp_df["RRP Check"] != "OK") & (comp_df["RRP Check"] != "-"))
+                            prc_ok = prc_fails == 0
+                            prc_badge = '<span class="qc-status-ok">OK</span>' if prc_ok else '<span class="qc-status-mismatch">Mismatch</span>'
+                            prc_text = "All live prices match zEcom RRP" if prc_ok else f"{prc_fails} price mismatches with RRP"
+                            
+                            # 7. Quantity Check (Target vs Live quantity comparison)
+                            qty_fails = sum(comp_df["Comparison Field"] == "Quantity")
+                            qty_ok = qty_fails == 0
+                            qty_badge = '<span class="qc-status-ok">OK</span>' if qty_ok else '<span class="qc-status-mismatch">Mismatch</span>'
+                            qty_text = "Live store quantities match Target listing sheet" if qty_ok else f"{qty_fails} stock discrepancies found"
+                            
+                            # 8. Images Check
+                            img_fails = sum(comp_df["Images Check"] == "Error")
+                            img_ok = img_fails == 0
+                            img_badge = '<span class="qc-status-ok">OK</span>' if img_ok else '<span class="qc-status-mismatch">Mismatch</span>'
+                            img_text = "All live listing images are present and valid URL format" if img_ok else f"{img_fails} image URLs are missing or broken"
+                            
+                            # 9. Size Chart Check
+                            sc_fails = sum(comp_df["Size Chart Check"] == "Error")
+                            sc_ok = sc_fails == 0
+                            sc_badge = '<span class="qc-status-ok">OK</span>' if sc_ok else '<span class="qc-status-mismatch">Mismatch</span>'
+                            sc_text = "All size charts match gender classifications" if sc_ok else f"{sc_fails} size chart mismatch flags raised"
+                            
+                            live_table_html = f"""
+                            <table class="qc-table">
+                                <thead>
+                                    <tr>
+                                        <th>Live Check Name</th>
+                                        <th>Target Condition</th>
+                                        <th>Actual Live Status</th>
+                                        <th style="text-align: center; width: 120px;">Result</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td style="font-weight: 600;">zEcom Status Check</td>
+                                        <td>Active on Ecom Channel tracker</td>
+                                        <td>{zec_text}</td>
+                                        <td style="text-align: center;">{zec_badge}</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="font-weight: 600;">Launch Date Check</td>
+                                        <td>Not in the future</td>
+                                        <td>{ld_text}</td>
+                                        <td style="text-align: center;">{ld_badge}</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="font-weight: 600;">Gender Mismatch Check</td>
+                                        <td>No male/female keywords conflict</td>
+                                        <td>{gd_text}</td>
+                                        <td style="text-align: center;">{gd_badge}</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="font-weight: 600;">Color Name Check</td>
+                                        <td>Matches Content file color</td>
+                                        <td>{col_text}</td>
+                                        <td style="text-align: center;">{col_badge}</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="font-weight: 600;">Size Check</td>
+                                        <td>Matches Content size specs</td>
+                                        <td>{sz_text}</td>
+                                        <td style="text-align: center;">{sz_badge}</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="font-weight: 600;">Price Check</td>
+                                        <td>Matches both zEcom RRP and Target price</td>
+                                        <td>{prc_text}</td>
+                                        <td style="text-align: center;">{prc_badge}</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="font-weight: 600;">Quantity Check</td>
+                                        <td>Live store quantities match Target sheet</td>
+                                        <td>{qty_text}</td>
+                                        <td style="text-align: center;">{qty_badge}</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="font-weight: 600;">Images Check</td>
+                                        <td>Image URLs exist and are valid format</td>
+                                        <td>{img_text}</td>
+                                        <td style="text-align: center;">{img_badge}</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="font-weight: 600;">Size Chart Check</td>
+                                        <td>Size Chart URL exists and matches gender</td>
+                                        <td>{sc_text}</td>
+                                        <td style="text-align: center;">{sc_badge}</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                            """
+                            st.markdown("### 📋 Live Listing QC Checklist")
+                            st.markdown(live_table_html, unsafe_allow_html=True)
+                            st.markdown("<br>", unsafe_allow_html=True)
                         
                         st.markdown("##### Detailed Discrepancy Table")
                         mismatches_only = comp_df[comp_df["Match Status"] != "Passed"]
