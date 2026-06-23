@@ -1,7 +1,7 @@
 import unittest
 import pandas as pd
 import datetime
-from validators import (
+from listing_qc_validator.utils.validators import (
     validate_row_internal, 
     validate_row_post, 
     validate_dataframe, 
@@ -22,7 +22,8 @@ class TestValidators(unittest.TestCase):
                 "uk_size": "42",
                 "us_size": "9",
                 "rus_size": "41",
-                "gender": "Men"
+                "content_gender": "Men",
+                "content_color_name": "Black"
             },
             {
                 "SKU": "4069161482999",
@@ -30,7 +31,8 @@ class TestValidators(unittest.TestCase):
                 "uk_size": "S",
                 "us_size": "XS",
                 "rus_size": "44",
-                "gender": "Kids"
+                "content_gender": "Kids",
+                "content_color_name": "Grey"
             }
         ])
         
@@ -40,7 +42,8 @@ class TestValidators(unittest.TestCase):
                 "Article No": "404620_07",
                 "Launch Date": pd.to_datetime("2026-06-20"),
                 "Ecom_Shopee": "Yes",
-                "Ecom_Lazada": "No",
+                "Ecom_Lazada": "Yes",
+                "Ecom_Zalora": "Yes",
                 "rrp_price": "89.99"
             },
             {
@@ -48,6 +51,7 @@ class TestValidators(unittest.TestCase):
                 "Launch Date": pd.to_datetime("2026-06-15"),
                 "Ecom_Shopee": "No",
                 "Ecom_Lazada": "Yes",
+                "Ecom_Zalora": "Yes",
                 "rrp_price": "49.99"
             }
         ])
@@ -63,7 +67,7 @@ class TestValidators(unittest.TestCase):
             "ecommerce_status": "Active",
             "launch_date": "2026-06-20",
             "gender": "Men",
-            "product_name": "Men's Leather Running Shoes Black Edition",
+            "product_name": "Men's Leather Running Shoes Black Edition (404620_07)",
             "color_name": "Black",
             "size": "42",  # Matches UK size 42 in Content File
             "quantity": 0,   # Must be exactly 0
@@ -120,7 +124,7 @@ class TestValidators(unittest.TestCase):
         row["size"] = "9"  # US Size
         zecom_maps_lazada = build_zecom_maps(self.mock_zecom_df, "Lazada PH")
         # Set Ecom Status to Inactive in upload row because Ecom_Lazada is Inactive in mock zEcom
-        row["ecommerce_status"] = "Inactive"
+        row["ecommerce_status"] = "Active"
         excs = validate_row_internal(
             row, 0, 
             channel="Lazada PH",
@@ -134,10 +138,10 @@ class TestValidators(unittest.TestCase):
         row = pd.Series({
             "article_number": "531103_03",
             "sku": "4069161482999",
-            "ecommerce_status": "Inactive", # zEcom Ecom_Shopee is Inactive
+            "ecommerce_status": "Active", # zEcom Ecom_Shopee is Inactive
             "launch_date": "2026-06-15",
             "gender": "Kids",
-            "product_name": "Kids Lightweight Jogger Pants", # Apparel
+            "product_name": "Kids Lightweight Jogger Pants (531103_03)", # Apparel
             "color_name": "Grey",
             "size": "44",  # Matches Russian size 44
             "quantity": 0,
@@ -181,7 +185,7 @@ class TestValidators(unittest.TestCase):
         self.assertEqual(len(tiktok_excs2), 0)
 
     def test_gender_compatibility(self):
-        from validators import genders_are_compatible
+        from listing_qc_validator.utils.validators import genders_are_compatible
         self.assertTrue(genders_are_compatible("Female", "Women"))
         self.assertTrue(genders_are_compatible("women", "female"))
         self.assertTrue(genders_are_compatible("Male", "Men"))
@@ -189,7 +193,7 @@ class TestValidators(unittest.TestCase):
         self.assertFalse(genders_are_compatible("Male", "Female"))
 
     def test_size_ignoring_prefixes_suffixes(self):
-        from validators import clean_size_for_comparison
+        from listing_qc_validator.utils.validators import clean_size_for_comparison
         self.assertEqual(clean_size_for_comparison("Int: S"), "s")
         self.assertEqual(clean_size_for_comparison("UK: 8"), "8")
         self.assertEqual(clean_size_for_comparison("US: 10"), "10")
@@ -246,7 +250,7 @@ class TestValidators(unittest.TestCase):
         self.assertEqual(len(excs), 0, f"Expected 0 exceptions, found: {excs}")
 
     def test_size_wl_normalization(self):
-        from validators import clean_size_for_comparison
+        from listing_qc_validator.utils.validators import clean_size_for_comparison
         self.assertEqual(clean_size_for_comparison("Int:W28 L30"), "28/30")
         self.assertEqual(clean_size_for_comparison("W28 L32"), "28/32")
         self.assertEqual(clean_size_for_comparison("W30L34"), "30/34")
@@ -263,6 +267,51 @@ class TestValidators(unittest.TestCase):
         )
         gender_prod_excs = [e for e in excs if "gender" in e["Message"].lower()]
         self.assertTrue(len(gender_prod_excs) > 0, "Expected a gender-related exception.")
+
+    def test_compare_source_and_live(self):
+        # Create a mock source_df (upload sheet)
+        source_df = pd.DataFrame([
+            {
+                "sku": "4069161482557",
+                "article_number": "404620_07",
+                "size": "42",
+                "product_name": "Men's Shoes",
+                "color_name": "Black",
+                "price": 89.99,
+                "quantity": 0,
+                "ecommerce_status": "Active"
+            }
+        ])
+        # Create a mock live_df (mismatched color and price)
+        live_df = pd.DataFrame([
+            {
+                "sku": "4069161482557",
+                "size": "42",
+                "product_name": "Men's Shoes",
+                "color_name": "White",       # Mismatched color (reference is Black)
+                "price": 99.99,              # Mismatched price (reference is 89.99)
+                "quantity": 10,
+                "ecommerce_status": "Active"
+            }
+        ])
+        
+        comp_df, metrics = compare_source_and_live(
+            source_df,
+            live_df,
+            match_column="sku",
+            content_df=self.mock_content_df,
+            zecom_df=self.mock_zecom_df,
+            channel="Shopee PH"
+        )
+        
+        self.assertFalse(comp_df.empty)
+        # Check that we have a Color Name mismatch and it lists the reference color "Black"
+        color_records = comp_df[comp_df["Comparison Field"] == "Color Name"]
+        self.assertFalse(color_records.empty)
+        self.assertEqual(color_records.iloc[0]["Source Value"], "Black")
+        self.assertEqual(color_records.iloc[0]["Live Value"], "White")
+        self.assertEqual(color_records.iloc[0]["Reference Value"], "Black")
+        self.assertEqual(color_records.iloc[0]["Match Status"], "Mismatch")
 
 if __name__ == '__main__':
     unittest.main()
