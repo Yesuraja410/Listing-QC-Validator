@@ -279,6 +279,24 @@ def generate_comparison_excel_report(comp_df: pd.DataFrame, summary_metrics: Dic
             'border_color': '#6ee7b7'
         })
 
+        even_row_fmt = workbook.add_format({
+            'font_name': 'Segoe UI',
+            'font_size': 10,
+            'border': 1,
+            'border_color': '#e5e7eb',
+            'bg_color': '#ffffff',
+            'align': 'left'
+        })
+        
+        odd_row_fmt = workbook.add_format({
+            'font_name': 'Segoe UI',
+            'font_size': 10,
+            'border': 1,
+            'border_color': '#e5e7eb',
+            'bg_color': '#f8fafc',
+            'align': 'left'
+        })
+
         # ── Sheet 1: Summary ──────────────────────────────────────────────────
         summary_df.to_excel(writer, sheet_name="Audit Summary", startrow=4, index=False)
         ws_sum = writer.sheets["Audit Summary"]
@@ -316,18 +334,35 @@ def generate_comparison_excel_report(comp_df: pd.DataFrame, summary_metrics: Dic
         
         for r in range(len(comp_df)):
             row_idx = 4 + r
-            status = comp_df.iloc[r, 6] # Match Status column ('Passed', 'Mismatch', 'Failed (Missing Live)', 'Warning (Extra Live)')
+            base_format = even_row_fmt if r % 2 == 0 else odd_row_fmt
+            status = str(comp_df.iloc[r, 7]) if pd.notna(comp_df.iloc[r, 7]) else "" # Match Status is now at index 7
             
-            if "Passed" in status:
-                row_format = green_fill
-            elif "Mismatch" in status or "Failed" in status:
-                row_format = red_fill
-            else:
-                row_format = yellow_fill
-                
             for c in range(len(comp_df.columns)):
                 val = comp_df.iloc[r, c]
-                ws_det.write(row_idx, c, str(val) if not pd.isna(val) else "", row_format)
+                val_str = str(val) if pd.notna(val) else ""
+                
+                # Default style: alternating rows
+                cell_format = base_format
+                
+                # Check for Match Status cell override
+                if c == 7:
+                    if "Passed" in val_str:
+                        cell_format = green_fill
+                    elif "Mismatch" in val_str or "Failed" in val_str:
+                        cell_format = red_fill
+                    elif "Warning" in val_str:
+                        cell_format = yellow_fill
+                
+                # Check for Audit Checks cells override (indices 9 to 16)
+                elif c >= 9 and c <= 16:
+                    if val_str in ["OK", "Yes", "Passed"]:
+                        cell_format = green_fill
+                    elif val_str in ["Mismatch", "Error", "Failed"]:
+                        cell_format = red_fill
+                    elif val_str in ["Warning"]:
+                        cell_format = yellow_fill
+                        
+                ws_det.write(row_idx, c, val_str, cell_format)
                 
         for col_num, col_name in enumerate(comp_df.columns):
             col_lens = comp_df[col_name].apply(lambda x: len(str(x)) if pd.notna(x) else 0)
