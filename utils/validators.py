@@ -168,6 +168,7 @@ def genders_are_compatible(g1: str, g2: str) -> bool:
 def build_content_maps(content_df: pd.DataFrame) -> Tuple[Dict, Dict, Dict, Dict, Dict, Dict, Dict, Dict, Dict]:
     """
     Builds lookup tables from Content File for UK, US, Russian size and color name mappings.
+    Optimised using vectorised pandas operations for speed.
     """
     sku_to_article = {}
     sku_to_uksize = {}
@@ -181,52 +182,65 @@ def build_content_maps(content_df: pd.DataFrame) -> Tuple[Dict, Dict, Dict, Dict
     article_to_russizes = {}
     
     if content_df is not None and not content_df.empty:
-        has_sku = "SKU" in content_df.columns
-        has_art = "Article No" in content_df.columns
-        has_uk = "uk_size" in content_df.columns
-        has_us = "us_size" in content_df.columns
-        has_rus = "rus_size" in content_df.columns
-        has_gender = "content_gender" in content_df.columns
-        has_color = "content_color_name" in content_df.columns
+        df_clean = content_df.copy()
         
-        for _, r in content_df.iterrows():
-            sku_val = _clean_sku(r.get("SKU")) if has_sku else ""
-            art_val = _normalise_article_no(r.get("Article No")) if has_art else ""
-            uk_val = _safe_str(r.get("uk_size")).strip() if has_uk else ""
-            us_val = _safe_str(r.get("us_size")).strip() if has_us else ""
-            rus_val = _safe_str(r.get("rus_size")).strip() if has_rus else ""
-            gender_val = _safe_str(r.get("content_gender")).strip() if has_gender else ""
-            color_val = _safe_str(r.get("content_color_name")).strip() if has_color else ""
+        has_sku = "SKU" in df_clean.columns
+        has_art = "Article No" in df_clean.columns
+        has_uk = "uk_size" in df_clean.columns
+        has_us = "us_size" in df_clean.columns
+        has_rus = "rus_size" in df_clean.columns
+        has_gender = "content_gender" in df_clean.columns
+        has_color = "content_color_name" in df_clean.columns
+        
+        if has_sku:
+            df_clean["SKU_clean"] = df_clean["SKU"].apply(_clean_sku)
+            df_clean = df_clean[df_clean["SKU_clean"] != ""]
+        else:
+            df_clean["SKU_clean"] = ""
             
-            if sku_val:
-                if art_val:
-                    sku_to_article[sku_val] = art_val
-                if uk_val:
-                    sku_to_uksize[sku_val] = uk_val
-                if us_val:
-                    sku_to_ussize[sku_val] = us_val
-                if rus_val:
-                    sku_to_russize[sku_val] = rus_val
-                if gender_val:
-                    sku_to_gender[sku_val] = gender_val
-                if color_val:
-                    sku_to_colorname[sku_val] = color_val
-                    
-            if art_val:
-                if art_val not in article_to_uksizes:
-                    article_to_uksizes[art_val] = set()
-                if art_val not in article_to_ussizes:
-                    article_to_ussizes[art_val] = set()
-                if art_val not in article_to_russizes:
-                    article_to_russizes[art_val] = set()
-                    
-                if uk_val:
-                    article_to_uksizes[art_val].add(uk_val.lower())
-                if us_val:
-                    article_to_ussizes[art_val].add(us_val.lower())
-                if rus_val:
-                    article_to_russizes[art_val].add(rus_val.lower())
+        if has_art:
+            df_clean["Art_clean"] = df_clean["Article No"].apply(_normalise_article_no)
+        else:
+            df_clean["Art_clean"] = ""
+            
+        # Build SKU-level dictionary maps
+        if not df_clean.empty and has_sku:
+            sku_df = df_clean
+            if has_art:
+                sku_to_article = dict(zip(sku_df["SKU_clean"], sku_df["Art_clean"]))
+            if has_uk:
+                sku_to_uksize = dict(zip(sku_df["SKU_clean"], sku_df["uk_size"].fillna("").astype(str).str.strip()))
+            if has_us:
+                sku_to_ussize = dict(zip(sku_df["SKU_clean"], sku_df["us_size"].fillna("").astype(str).str.strip()))
+            if has_rus:
+                sku_to_russize = dict(zip(sku_df["SKU_clean"], sku_df["rus_size"].fillna("").astype(str).str.strip()))
+            if has_gender:
+                sku_to_gender = dict(zip(sku_df["SKU_clean"], sku_df["content_gender"].fillna("").astype(str).str.strip()))
+            if has_color:
+                sku_to_colorname = dict(zip(sku_df["SKU_clean"], sku_df["content_color_name"].fillna("").astype(str).str.strip()))
                 
+        # Build Article-level sets
+        if "Art_clean" in df_clean.columns and not df_clean.empty:
+            art_df = df_clean[df_clean["Art_clean"] != ""]
+            if has_uk:
+                df_uk = art_df.copy()
+                df_uk["uk_size_low"] = df_uk["uk_size"].fillna("").astype(str).str.strip().str.lower()
+                df_uk = df_uk[df_uk["uk_size_low"] != ""]
+                if not df_uk.empty:
+                    article_to_uksizes = df_uk.groupby("Art_clean")["uk_size_low"].apply(set).to_dict()
+            if has_us:
+                df_us = art_df.copy()
+                df_us["us_size_low"] = df_us["us_size"].fillna("").astype(str).str.strip().str.lower()
+                df_us = df_us[df_us["us_size_low"] != ""]
+                if not df_us.empty:
+                    article_to_ussizes = df_us.groupby("Art_clean")["us_size_low"].apply(set).to_dict()
+            if has_rus:
+                df_rus = art_df.copy()
+                df_rus["rus_size_low"] = df_rus["rus_size"].fillna("").astype(str).str.strip().str.lower()
+                df_rus = df_rus[df_rus["rus_size_low"] != ""]
+                if not df_rus.empty:
+                    article_to_russizes = df_rus.groupby("Art_clean")["rus_size_low"].apply(set).to_dict()
+                    
     return (
         sku_to_article, sku_to_uksize, sku_to_ussize, sku_to_russize, sku_to_gender, sku_to_colorname,
         article_to_uksizes, article_to_ussizes, article_to_russizes
@@ -235,10 +249,8 @@ def build_content_maps(content_df: pd.DataFrame) -> Tuple[Dict, Dict, Dict, Dict
 
 def build_zecom_maps(zecom_df: pd.DataFrame, channel: str) -> Tuple[Dict, Dict, Dict]:
     """
-    Builds lookup tables from zEcom File:
-    1. article_to_launchdate: Article No -> Launch Date
-    2. article_to_ecomstatus: Article No -> Ecom Status (Active vs Inactive)
-    3. article_to_rrpprice: Article No -> RRP Price
+    Builds lookup tables from zEcom File.
+    Optimised using vectorised pandas operations for speed.
     """
     article_to_launchdate = {}
     article_to_ecomstatus = {}
@@ -251,30 +263,26 @@ def build_zecom_maps(zecom_df: pd.DataFrame, channel: str) -> Tuple[Dict, Dict, 
         else:
             ecom_col = f"Ecom_{platform.capitalize()}"
         
-        has_art = "Article No" in zecom_df.columns
-        has_launch = "Launch Date" in zecom_df.columns
-        has_ecom = ecom_col in zecom_df.columns
-        has_rrp = "rrp_price" in zecom_df.columns
+        df_clean = zecom_df.copy()
+        if "Article No" in df_clean.columns:
+            df_clean["Art_clean"] = df_clean["Article No"].apply(_normalise_article_no)
+        else:
+            df_clean["Art_clean"] = ""
+            
+        df_clean = df_clean[df_clean["Art_clean"] != ""]
         
-        for _, r in zecom_df.iterrows():
-            art_val = _normalise_article_no(r.get("Article No"))
-            if art_val:
-                if has_launch:
-                    ld = r.get("Launch Date")
-                    if pd.notna(ld) and str(ld).strip() not in ("", "NaT", "nan"):
-                        try:
-                            article_to_launchdate[art_val] = str(pd.to_datetime(ld).date())
-                        except Exception:
-                            article_to_launchdate[art_val] = _safe_str(ld)
-                    else:
-                        article_to_launchdate[art_val] = ""
-                        
-                if has_ecom:
-                    article_to_ecomstatus[art_val] = _safe_str(r.get(ecom_col))
-                    
-                if has_rrp:
-                    article_to_rrpprice[art_val] = _safe_str(r.get("rrp_price"))
-                    
+        if not df_clean.empty:
+            if "Launch Date" in df_clean.columns:
+                dates = pd.to_datetime(df_clean["Launch Date"], errors="coerce")
+                formatted_dates = dates.dt.date.astype(str).replace("NaT", "")
+                article_to_launchdate = dict(zip(df_clean["Art_clean"], formatted_dates))
+                
+            if ecom_col in df_clean.columns:
+                article_to_ecomstatus = dict(zip(df_clean["Art_clean"], df_clean[ecom_col].apply(_safe_str)))
+                
+            if "rrp_price" in df_clean.columns:
+                article_to_rrpprice = dict(zip(df_clean["Art_clean"], df_clean["rrp_price"].apply(_safe_str)))
+                
     return article_to_launchdate, article_to_ecomstatus, article_to_rrpprice
 
 # ── Row Validation Logic ──────────────────────────────────────────────────────
@@ -295,15 +303,15 @@ def validate_row_internal(
     source_file = row.get("_source_file", "Unknown File")
     row_num = row.get("_original_row_number", idx + 2)
     art_num = clean_str(row.get("article_number", ""))
-    norm_art = _normalise_article_no(art_num)
-    sku_val = _clean_sku(row.get("sku", ""))
+    norm_art = row.get("_norm_art") if "_norm_art" in row else _normalise_article_no(art_num)
+    sku_val = row.get("_cleaned_sku") if "_cleaned_sku" in row else _clean_sku(row.get("sku", ""))
     prod_name = clean_str(row.get("product_name", ""))
     gender = clean_str(row.get("gender", ""))
     ecom_status = clean_str(row.get("ecommerce_status", ""))
     
     # ── 1. Apply Size Corrections ──
     raw_size = clean_str(row.get("size", ""))
-    size = correct_size(raw_size)
+    size = row.get("_corrected_size") if "_corrected_size" in row else correct_size(raw_size)
     
     sku_to_article, sku_to_uksize, sku_to_ussize, sku_to_russize, sku_to_gender, sku_to_colorname, \
         article_to_uksizes, article_to_ussizes, article_to_russizes = content_maps
@@ -442,14 +450,15 @@ def validate_row_internal(
         if is_empty(row.get("size")):
             add_exc("Size", row.get("size"), "Error", "Size is missing.")
 
-        # 9. Strict Quantity Check: Quantity must be exactly 0
+        # 9. Quantity Check: Must be exactly 0 for target sheet (if not is_live_report), otherwise just must be numeric
         qty_raw = row.get("quantity")
+        is_live_report = row.get("_is_live_report", False)
         if is_empty(qty_raw):
             add_exc("Quantity", qty_raw, "Error", "Quantity is missing.")
         else:
             try:
                 qty = float(qty_raw)
-                if qty != 0:
+                if not is_live_report and qty != 0:
                     add_exc("Quantity", qty_raw, "Error", f"Quantity must be exactly 0 (Uploaded: {qty_raw}).")
             except (ValueError, TypeError):
                 add_exc("Quantity", qty_raw, "Error", "Quantity is not a valid number.")
@@ -606,6 +615,26 @@ def validate_row_internal(
     return exceptions
 
 
+_IMAGE_URL_CACHE = {}
+
+def check_live_image_url(url: str) -> Tuple[bool, str]:
+    if url in _IMAGE_URL_CACHE:
+        return _IMAGE_URL_CACHE[url]
+    try:
+        resp = requests.head(url, timeout=2)
+        if resp.status_code < 400:
+            result = (True, "")
+        else:
+            resp_get = requests.get(url, timeout=2, stream=True)
+            if resp_get.status_code < 400:
+                result = (True, "")
+            else:
+                result = (False, f"broken (HTTP Status {resp_get.status_code})")
+    except Exception as e:
+        result = (False, f"unreachable: {type(e).__name__}")
+    _IMAGE_URL_CACHE[url] = result
+    return result
+
 def validate_row_post(
     row: pd.Series, 
     idx: int, 
@@ -622,7 +651,7 @@ def validate_row_post(
     """
     exceptions = validate_row_internal(row, idx, channel, content_maps, zecom_maps, allowed_genders, allowed_statuses)
     
-    sku_val = _clean_sku(row.get("sku", ""))
+    sku_val = row.get("_cleaned_sku") if "_cleaned_sku" in row else _clean_sku(row.get("sku", ""))
     is_parent_sku = False
     if not is_empty(row.get("sku")):
         is_parent_sku = not bool(re.fullmatch(r'\d{13}', sku_val))
@@ -661,14 +690,9 @@ def validate_row_post(
                 if not URL_REGEX.match(url):
                     add_exc("Images", url, "Error", f"Image #{i+1} is not a valid URL format.")
                 elif check_live_images:
-                    try:
-                        resp = requests.head(url, timeout=3)
-                        if resp.status_code >= 400:
-                            resp_get = requests.get(url, timeout=3, stream=True)
-                            if resp_get.status_code >= 400:
-                                add_exc("Images", url, "Error", f"Image #{i+1} link is broken (HTTP Status {resp_get.status_code}).")
-                    except Exception as e:
-                        add_exc("Images", url, "Error", f"Image #{i+1} link is unreachable: {type(e).__name__}")
+                    ok, err_msg = check_live_image_url(url)
+                    if not ok:
+                        add_exc("Images", url, "Error", f"Image #{i+1} link is {err_msg}.")
 
     # 2. Size Chart
     size_chart_raw = row.get("size_chart")
@@ -700,12 +724,14 @@ def validate_dataframe(
     zecom_df: pd.DataFrame = None,
     check_live_images: bool = False, 
     allowed_genders: List[str] = ALLOWED_GENDERS, 
-    allowed_statuses: List[str] = ALLOWED_STATUSES
+    allowed_statuses: List[str] = ALLOWED_STATUSES,
+    is_live_report: bool = False
 ) -> Tuple[pd.DataFrame, pd.DataFrame, List[str]]:
     """
     Validates a whole standardized DataFrame with UK, US, Russian size and zEcom RRP rules.
     """
     df = df.copy()
+    df["_is_live_report"] = is_live_report
     logs = []
     logs.append(f"Starting validation run at {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logs.append(f"Validation Stage: {qc_stage} | Target Channel: {channel}")
@@ -736,65 +762,59 @@ def validate_dataframe(
     ref_size_col = []
     ref_rrp_col = []
     
+    # ── Pre-calculate and clean columns vectorially ──
+    df["_cleaned_sku"] = df["sku"].fillna("").astype(str).str.strip().apply(_clean_sku)
+    df["_norm_art"] = df["article_number"].fillna("").astype(str).str.strip().apply(_normalise_article_no)
+    df["_corrected_size"] = df["size"].fillna("").astype(str).str.strip().apply(correct_size)
+    df["_corrected_size_low"] = df["_corrected_size"].str.lower().str.strip()
+    
+    # Resolve missing Article Number using SKU from content_maps
+    if sku_to_article:
+        missing_art_mask = df["article_number"].fillna("").astype(str).str.strip() == ""
+        resolved_arts = df.loc[missing_art_mask, "_cleaned_sku"].map(sku_to_article)
+        df.loc[missing_art_mask, "article_number"] = resolved_arts.fillna("")
+        df.loc[missing_art_mask, "_norm_art"] = df.loc[missing_art_mask, "article_number"].apply(_normalise_article_no)
+
+    # Resolve missing Launch Date using _norm_art from zecom_maps
+    if zecom_maps:
+        article_to_launchdate, _, _ = zecom_maps
+        if article_to_launchdate:
+            missing_launch_mask = df["launch_date"].fillna("").astype(str).str.strip() == ""
+            resolved_launches = df.loc[missing_launch_mask, "_norm_art"].map(article_to_launchdate)
+            df.loc[missing_launch_mask, "launch_date"] = resolved_launches.fillna("")
+
+    # Resolve missing Gender using SKU from content_maps
+    if content_maps:
+        sku_to_gender = content_maps[4]
+        if sku_to_gender:
+            missing_gender_mask = df["gender"].fillna("").astype(str).str.strip() == ""
+            resolved_genders = df.loc[missing_gender_mask, "_cleaned_sku"].map(sku_to_gender)
+            df.loc[missing_gender_mask, "gender"] = resolved_genders.fillna("")
+            
     # Group by SKU and Size (after applying corrections) to find duplicates (only for 13-digit SKUs)
     duplicate_skus_sizes = set()
     if "sku" in df.columns and "size" in df.columns:
-        valid_skus = df["sku"].dropna().astype(str).str.strip().apply(_clean_sku)
-        valid_skus = valid_skus[valid_skus.str.match(r'^\d{13}$')]
-        dup_df = df[df["sku"].astype(str).str.strip().apply(_clean_sku).isin(valid_skus)].copy()
-        if not dup_df.empty:
-            dup_df["_cleaned_sku"] = dup_df["sku"].astype(str).str.strip().apply(_clean_sku)
-            dup_df["_corrected_size"] = dup_df["size"].apply(correct_size).astype(str).str.strip().str.lower()
-            dups = dup_df[dup_df.duplicated(subset=["_cleaned_sku", "_corrected_size"], keep=False)]
-            for _, dup_row in dups.iterrows():
-                sk = str(dup_row["_cleaned_sku"]).strip()
-                sz = str(dup_row["_corrected_size"]).strip()
-                duplicate_skus_sizes.add((sk, sz))
+        is_13 = df["_cleaned_sku"].str.match(r'^\d{13}$')
+        dup_mask = df.duplicated(subset=["_cleaned_sku", "_corrected_size_low"], keep=False) & is_13
+        dups = df[dup_mask]
+        if not dups.empty:
+            duplicate_skus_sizes = set(zip(dups["_cleaned_sku"], dups["_corrected_size_low"]))
                 
     logs.append(f"Found {len(duplicate_skus_sizes)} duplicate 13-digit sku+size combinations in upload sheet.")
 
     for idx, row in df.iterrows():
-        sku_val = _clean_sku(row.get("sku", ""))
+        sku_val = row["_cleaned_sku"]
         art_num = clean_str(row.get("article_number", ""))
         is_parent_sku = False
-        if not is_empty(row.get("sku")):
+        if sku_val:
             is_parent_sku = not bool(re.fullmatch(r'\d{13}', sku_val))
-        
-        # If Article Number is empty, try to resolve it from Content File SKU lookup
-        if not art_num and sku_to_article and sku_val in sku_to_article:
-            resolved_art = sku_to_article[sku_val]
-            df.loc[idx, "article_number"] = resolved_art
-            # Update row Series for this iteration
-            row = row.copy()
-            row["article_number"] = resolved_art
-            art_num = resolved_art
-
-        norm_art = _normalise_article_no(art_num)
-
-        # If launch_date is empty/missing, populate it from zEcom reference
-        if is_empty(row.get("launch_date")) and zecom_maps:
-            article_to_launchdate, _, _ = zecom_maps
-            ref_ld_str = article_to_launchdate.get(norm_art, "") if norm_art else ""
-            if ref_ld_str:
-                df.loc[idx, "launch_date"] = ref_ld_str
-                row = row.copy()
-                row["launch_date"] = ref_ld_str
-
-        # If gender is empty/missing, populate it from Content reference
-        if is_empty(row.get("gender")) and content_maps:
-            _, _, _, _, sku_to_gender, _, _, _, _ = content_maps
-            ref_gender = sku_to_gender.get(sku_val, "") if sku_val else ""
-            if ref_gender:
-                df.loc[idx, "gender"] = ref_gender
-                row = row.copy()
-                row["gender"] = ref_gender
 
         if qc_stage == "Internal QC":
             row_exceptions = validate_row_internal(row, idx, channel, content_maps, zecom_maps, allowed_genders, allowed_statuses)
         else:
             row_exceptions = validate_row_post(row, idx, channel, content_maps, zecom_maps, check_live_images, allowed_genders, allowed_statuses)
             
-        sk = _clean_sku(row.get("sku", ""))
+        sk = sku_val
         raw_size = clean_str(row.get("size", ""))
         sz_corrected = correct_size(raw_size).strip().lower()
         
@@ -936,9 +956,17 @@ def validate_dataframe(
     return exc_df, val_df, logs
 
 
-def compare_source_and_live(source_df: pd.DataFrame, live_df: pd.DataFrame, match_column: str = "sku") -> Tuple[pd.DataFrame, Dict]:
+def compare_source_and_live(
+    source_df: pd.DataFrame, 
+    live_df: pd.DataFrame, 
+    match_column: str = "sku",
+    content_df: pd.DataFrame = None,
+    zecom_df: pd.DataFrame = None,
+    channel: str = None
+) -> Tuple[pd.DataFrame, Dict]:
     """
     Compares Standardized Source Data against Standardized Live Data.
+    And executes all 9 checks against reference databases.
     """
     comparison_records = []
     
@@ -959,10 +987,51 @@ def compare_source_and_live(source_df: pd.DataFrame, live_df: pd.DataFrame, matc
     else:
         key_col = match_column
         
-    src_grouped = src_clean.set_index(key_col)
-    live_grouped = live_clean.set_index(key_col)
+    # Deduplicate match keys to make dict conversion unique
+    src_clean = src_clean.drop_duplicates(subset=[key_col])
+    live_clean = live_clean.drop_duplicates(subset=[key_col])
     
-    all_keys = set(src_grouped.index).union(set(live_grouped.index))
+    # Convert to dict of records keyed by key_col for high performance lookup
+    src_dict = src_clean.set_index(key_col).to_dict('index')
+    live_dict = live_clean.set_index(key_col).to_dict('index')
+    
+    # Run 9 checks on live listings first
+    live_val_dict = {}
+    if content_df is not None and zecom_df is not None and channel is not None:
+        # Map live_clean columns to standard validation columns
+        live_std = pd.DataFrame()
+        live_std["sku"] = live_clean[match_column]
+        live_std["article_number"] = ""
+        live_std["launch_date"] = ""
+        live_std["gender"] = ""
+        live_std["product_name"] = live_clean["product_name"] if "product_name" in live_clean.columns else ""
+        live_std["color_name"] = live_clean["color_name"] if "color_name" in live_clean.columns else ""
+        live_std["size"] = live_clean["size"] if "size" in live_clean.columns else ""
+        live_std["price"] = live_clean["price"] if "price" in live_clean.columns else "0.0"
+        live_std["quantity"] = live_clean["quantity"] if "quantity" in live_clean.columns else "0"
+        live_std["images"] = live_clean["images"] if "images" in live_clean.columns else ""
+        live_std["size_chart"] = live_clean["size_chart"] if "size_chart" in live_clean.columns else ""
+        live_std["ecommerce_status"] = live_clean["ecommerce_status"] if "ecommerce_status" in live_clean.columns else "Active"
+        live_std["_source_file"] = "Live Report"
+        live_std["_original_row_number"] = range(2, len(live_clean) + 2)
+        
+        _, live_val_df, _ = validate_dataframe(
+            live_std,
+            qc_stage="Post QC",
+            channel=channel,
+            content_df=content_df,
+            zecom_df=zecom_df,
+            check_live_images=False, # Skip http checks during comparison to stay fast
+            is_live_report=True
+        )
+        
+        if composite_match:
+            live_val_df["_match_key"] = live_val_df["sku"].astype(str).str.strip().apply(_clean_sku) + " | " + live_val_df["size"].astype(str).str.strip().apply(correct_size).str.lower()
+        else:
+            live_val_df["_match_key"] = live_val_df["sku"].astype(str).str.strip().apply(_clean_sku)
+        live_val_dict = live_val_df.drop_duplicates(subset=["_match_key"]).set_index("_match_key").to_dict('index')
+        
+    all_keys = set(src_dict.keys()).union(set(live_dict.keys()))
     
     matched_count = 0
     mismatch_count = 0
@@ -972,19 +1041,34 @@ def compare_source_and_live(source_df: pd.DataFrame, live_df: pd.DataFrame, matc
     fields_to_compare = ["price", "quantity", "ecommerce_status", "product_name", "color_name", "images", "size_chart"]
     
     for key in all_keys:
-        in_source = key in src_grouped.index
-        in_live = key in live_grouped.index
+        src_row = src_dict.get(key)
+        live_row = live_dict.get(key)
         
-        if in_source and in_live:
-            matched_count += 1
-            src_row = src_grouped.loc[key]
-            live_row = live_grouped.loc[key]
+        # Get 9 reference check results for the live listing
+        live_chk = live_val_dict.get(key, {})
+        
+        # Initialize check statuses
+        zec_chk_val = live_chk.get("Zeocm Status", "-")
+        ld_chk_val = "-"
+        gd_chk_val = live_chk.get("Gender Check", "-")
+        col_chk_val = live_chk.get("Color Check", "-")
+        sz_chk_val = live_chk.get("Size Check", "-")
+        prc_chk_val = live_chk.get("RRP Check", "-")
+        
+        qc_det = live_chk.get("_qc_details", "")
+        if "Launch Date" in qc_det:
+            ld_chk_val = "Mismatch"
+        elif live_chk:
+            ld_chk_val = "OK"
             
-            if isinstance(src_row, pd.DataFrame):
-                src_row = src_row.iloc[0]
-            if isinstance(live_row, pd.DataFrame):
-                live_row = live_row.iloc[0]
-                
+        img_chk_val = "-"
+        sc_chk_val = "-"
+        if live_chk:
+            img_chk_val = "Error" if "Images:" in qc_det else "OK"
+            sc_chk_val = "Error" if "Size Chart:" in qc_det or "Size chart:" in qc_det else "OK"
+        
+        if src_row and live_row:
+            matched_count += 1
             art_num = src_row.get("article_number", "")
             sz = src_row.get("size", "N/A")
             prod_name = src_row.get("product_name", "")
@@ -997,21 +1081,32 @@ def compare_source_and_live(source_df: pd.DataFrame, live_df: pd.DataFrame, matc
                 
                 if field == "quantity" and "MP Stock" in live_row:
                     live_field = "MP Stock"
+                elif field == "quantity" and "quantity" in live_row:
+                    live_field = "quantity"
+                    
                 if field == "ecommerce_status" and "MP Status" in live_row:
                     live_field = "MP Status"
+                elif field == "ecommerce_status" and "ecommerce_status" in live_row:
+                    live_field = "ecommerce_status"
+                    
                 if field == "price" and "MP Price" in live_row:
                     live_field = "MP Price"
+                elif field == "price" and "price" in live_row:
+                    live_field = "price"
+                    
                 if field == "product_name" and "MP Product Name" in live_row:
                     live_field = "MP Product Name"
-
-                if src_field in src_row and live_field in live_row:
-                    s_val = src_row[src_field]
-                    l_val = live_row[live_field]
+                elif field == "product_name" and "product_name" in live_row:
+                    live_field = "product_name"
                     
-                    is_diff = False
+                s_val = src_row.get(src_field)
+                l_val = live_row.get(live_field)
+                
+                is_diff = False
+                if s_val is not None and l_val is not None:
                     if field == "color_name":
-                        s_c = str(s_val).strip().lower() if pd.notna(s_val) else ""
-                        l_c = str(l_val).strip().lower() if pd.notna(l_val) else ""
+                        s_c = str(s_val).strip().lower()
+                        l_c = str(l_val).strip().lower()
                         is_diff = (s_c != l_c) and (s_c not in l_c) and (l_c not in s_c) if s_c and l_c else (s_c != l_c)
                     elif field == "ecommerce_status":
                         is_diff = _normalise_status(s_val) != _normalise_status(l_val)
@@ -1025,18 +1120,37 @@ def compare_source_and_live(source_df: pd.DataFrame, live_df: pd.DataFrame, matc
                     else:
                         is_diff = clean_str(s_val).lower() != clean_str(l_val).lower()
                         
-                    if is_diff:
-                        row_mismatches.append(field)
-                        comparison_records.append({
-                            "Article Number": art_num,
-                            "Size": sz,
-                            "Product Name": prod_name,
-                            "Comparison Field": field.replace("_", " ").title(),
-                            "Source Value": str(s_val),
-                            "Live Value": str(l_val),
-                            "Match Status": "Mismatch",
-                            "Description": f"Discrepancy in {field.replace('_', ' ')}. Upload Sheet: {s_val}, Live Store: {l_val}"
-                        })
+                if is_diff:
+                    row_mismatches.append(field)
+                    ref_val = "-"
+                    if field == "color_name":
+                        ref_val = live_chk.get("ref_color_name", "-")
+                    elif field == "size":
+                        ref_val = live_chk.get("ref_size", "-")
+                    elif field == "price":
+                        ref_val = live_chk.get("ref_rrp", "-")
+                    elif field == "ecommerce_status":
+                        ref_val = live_chk.get("Zeocm Status", "-")
+                    
+                    comparison_records.append({
+                        "Article Number": art_num,
+                        "Size": sz,
+                        "Product Name": prod_name,
+                        "Comparison Field": field.replace("_", " ").title(),
+                        "Source Value": str(s_val) if s_val is not None else "",
+                        "Live Value": str(l_val) if l_val is not None else "",
+                        "Reference Value": str(ref_val) if ref_val is not None else "-",
+                        "Match Status": "Mismatch",
+                        "Description": f"Discrepancy in {field.replace('_', ' ')}. Upload Sheet: {s_val}, Live Store: {l_val}",
+                        "zEcom Status Check": zec_chk_val,
+                        "Launch Date Check": ld_chk_val,
+                        "Gender Check": gd_chk_val,
+                        "Color Check": col_chk_val,
+                        "Size Check": sz_chk_val,
+                        "RRP Check": prc_chk_val,
+                        "Images Check": img_chk_val,
+                        "Size Chart Check": sc_chk_val
+                    })
             
             if row_mismatches:
                 mismatch_count += 1
@@ -1048,16 +1162,21 @@ def compare_source_and_live(source_df: pd.DataFrame, live_df: pd.DataFrame, matc
                     "Comparison Field": "All Fields",
                     "Source Value": "-",
                     "Live Value": "-",
+                    "Reference Value": "-",
                     "Match Status": "Passed",
-                    "Description": "All compared listing attributes match correctly."
+                    "Description": "All compared listing attributes match correctly.",
+                    "zEcom Status Check": zec_chk_val,
+                    "Launch Date Check": ld_chk_val,
+                    "Gender Check": gd_chk_val,
+                    "Color Check": col_chk_val,
+                    "Size Check": sz_chk_val,
+                    "RRP Check": prc_chk_val,
+                    "Images Check": img_chk_val,
+                    "Size Chart Check": sc_chk_val
                 })
                 
-        elif in_source:
+        elif src_row:
             missing_in_live += 1
-            src_row = src_grouped.loc[key]
-            if isinstance(src_row, pd.DataFrame):
-                src_row = src_row.iloc[0]
-                
             comparison_records.append({
                 "Article Number": src_row.get("article_number", ""),
                 "Size": src_row.get("size", "N/A"),
@@ -1065,24 +1184,38 @@ def compare_source_and_live(source_df: pd.DataFrame, live_df: pd.DataFrame, matc
                 "Comparison Field": "Listing Presence",
                 "Source Value": "Present",
                 "Live Value": "Missing",
+                "Reference Value": "-",
                 "Match Status": "Failed (Missing Live)",
-                "Description": "Product exists in uploaded sheet but is missing from live store listings."
+                "Description": "Product exists in uploaded sheet but is missing from live store listings.",
+                "zEcom Status Check": "-",
+                "Launch Date Check": "-",
+                "Gender Check": "-",
+                "Color Check": "-",
+                "Size Check": "-",
+                "RRP Check": "-",
+                "Images Check": "-",
+                "Size Chart Check": "-"
             })
         else:
             missing_in_source += 1
-            live_row = live_grouped.loc[key]
-            if isinstance(live_row, pd.DataFrame):
-                live_row = live_row.iloc[0]
-                
             comparison_records.append({
-                "Article Number": live_row.get("Article No", "Unknown"),
-                "Size": live_row.get("size", "N/A") if "size" in live_row else "N/A",
+                "Article Number": live_row.get("Article No", live_row.get("article_number", "Unknown")),
+                "Size": live_row.get("size", "N/A"),
                 "Product Name": live_row.get("product_name", "Unknown"),
                 "Comparison Field": "Listing Presence",
                 "Source Value": "Missing",
                 "Live Value": "Present",
+                "Reference Value": "-",
                 "Match Status": "Warning (Extra Live)",
-                "Description": "Product is live on store but missing from uploaded master sheet."
+                "Description": "Product is live on store but missing from uploaded master sheet.",
+                "zEcom Status Check": zec_chk_val,
+                "Launch Date Check": ld_chk_val,
+                "Gender Check": gd_chk_val,
+                "Color Check": col_chk_val,
+                "Size Check": sz_chk_val,
+                "RRP Check": prc_chk_val,
+                "Images Check": img_chk_val,
+                "Size Chart Check": sc_chk_val
             })
             
     summary_metrics = {
@@ -1096,6 +1229,10 @@ def compare_source_and_live(source_df: pd.DataFrame, live_df: pd.DataFrame, matc
     if comparison_records:
         comp_df = pd.DataFrame(comparison_records)
     else:
-        comp_df = pd.DataFrame(columns=["Article Number", "Size", "Product Name", "Comparison Field", "Source Value", "Live Value", "Match Status", "Description"])
+        comp_df = pd.DataFrame(columns=[
+            "Article Number", "Size", "Product Name", "Comparison Field", "Source Value", "Live Value", "Reference Value",
+            "Match Status", "Description", "zEcom Status Check", "Launch Date Check", "Gender Check", 
+            "Color Check", "Size Check", "RRP Check", "Images Check", "Size Chart Check"
+        ])
         
     return comp_df, summary_metrics
