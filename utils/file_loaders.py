@@ -1048,17 +1048,15 @@ from typing import Tuple
 def parse_variation_combo(val: str) -> Tuple[str, str]:
     """
     Splits a variation string by comma and returns (color, size).
-    If only one part, color is empty, size is the part.
+    If only one part, checks if it is size-like to return (color, size) correctly.
     """
     if not val or pd.isna(val):
         return "", ""
     parts = [p.strip() for p in str(val).split(",") if p.strip()]
     if len(parts) == 0:
         return "", ""
-    if len(parts) == 1:
-        return "", parts[0]
         
-    # We have 2 or more parts. Let's find which part is size-like.
+    # We have 1 or more parts. Let's find which part is size-like.
     def is_size_like(p):
         p_clean = p.lower()
         if any(p_clean.startswith(prefix) for prefix in ["uk:", "us:", "int:", "eu:", "uk ", "us ", "int ", "eu "]):
@@ -1071,6 +1069,12 @@ def parse_variation_combo(val: str) -> Tuple[str, str]:
             return True
         return False
         
+    if len(parts) == 1:
+        if is_size_like(parts[0]):
+            return "", parts[0]
+        else:
+            return parts[0], ""
+            
     part1_size = is_size_like(parts[0])
     part2_size = is_size_like(parts[1])
     
@@ -1081,21 +1085,33 @@ def parse_variation_combo(val: str) -> Tuple[str, str]:
     else:
         return parts[0], parts[1]
 
+def _clean_live_df_skipping(df: pd.DataFrame, sku_col: str, platform: str) -> pd.DataFrame:
+    if df.empty:
+        return df
+    if sku_col not in df.columns:
+        return df
+    first_val = _safe_str(df.iloc[0][sku_col])
+    if not first_val or any(k in first_val.lower() for k in ["mandatory", "example", "instruction", "select"]):
+        if len(df) > 3:
+            return df.iloc[3:].reset_index(drop=True)
+    return df
+
 def parse_live_lazada(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame()
-    if len(df) > 3 and not any(c in df.columns for c in ["SellerSKU", "name"]):
-        df_data = df.iloc[3:].reset_index(drop=True)
-    else:
-        df_data = df
-        
-    df_data = _normalise_cols(df_data)
+    df_data = _normalise_cols(df.copy())
     
     sku_col = next((c for c in df_data.columns if c.lower() in ["sellersku", "sku", "seller sku"]), None)
+    if sku_col:
+        df_data = _clean_live_df_skipping(df_data, sku_col, "lazada")
+        
     name_col = next((c for c in df_data.columns if c.lower() in ["name", "product name", "product_name"]), None)
     qty_col = next((c for c in df_data.columns if c.lower() in ["quantity", "stock", "qty", "mp stock"]), None)
     price_col = next((c for c in df_data.columns if c.lower() in ["price", "selling price", "mp price"]), None)
-    var_col = next((c for c in df_data.columns if c.lower() in ["variation", "variations", "variation combo"]), None)
+    
+    var_col = next((c for c in df_data.columns if c.lower() in ["variation", "variations", "variation combo", "variation_combo"]), None)
+    color_col = next((c for c in df_data.columns if c.lower() in ["color", "colour", "color name", "color_name"]), None)
+    size_col = next((c for c in df_data.columns if c.lower() in ["size", "size_name", "size name"]), None)
     
     img_cols = [c for c in df_data.columns if "image" in c.lower() and not "chart" in c.lower()]
     sc_col = next((c for c in df_data.columns if "size" in c.lower() and "chart" in c.lower()), None)
@@ -1110,9 +1126,14 @@ def parse_live_lazada(df: pd.DataFrame) -> pd.DataFrame:
         qty_val = _safe_str(row.get(qty_col)) if qty_col else "0"
         price_val = _safe_str(row.get(price_col)) if price_col else "0.0"
         
-        var_val = _safe_str(row.get(var_col)) if var_col else ""
-        color_val, size_val = parse_variation_combo(var_val)
-        
+        # Variation parsing (combo or separate)
+        if var_col and not is_empty(row.get(var_col)):
+            var_val = _safe_str(row.get(var_col))
+            color_val, size_val = parse_variation_combo(var_val)
+        else:
+            color_val = _safe_str(row.get(color_col)) if color_col else ""
+            size_val = _safe_str(row.get(size_col)) if size_col else ""
+            
         imgs = [str(row[c]).strip() for c in img_cols if pd.notna(row.get(c)) and str(row[c]).strip() not in ("", "nan", "None")]
         imgs_str = ",".join(imgs)
         sc_val = _safe_str(row.get(sc_col)) if sc_col else ""
@@ -1131,19 +1152,22 @@ def parse_live_lazada(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(records)
 
 def parse_live_shopee(df: pd.DataFrame) -> pd.DataFrame:
-    if len(df) > 3 and not any(c in df.columns for c in ["SKU", "Parent SKU", "Variation Name"]):
-        df_data = df.iloc[3:].reset_index(drop=True)
-    else:
-        df_data = df
-        
-    df_data = _normalise_cols(df_data)
+    if df.empty:
+        return pd.DataFrame()
+    df_data = _normalise_cols(df.copy())
     
     sku_col = next((c for c in df_data.columns if c.lower() in ["sku", "variation sku", "seller sku"]), None)
+    if sku_col:
+        df_data = _clean_live_df_skipping(df_data, sku_col, "shopee")
+        
     parent_col = next((c for c in df_data.columns if c.lower() in ["parent sku", "parentsku", "parent_sku"]), None)
     name_col = next((c for c in df_data.columns if c.lower() in ["product name", "name", "product_name"]), None)
     price_col = next((c for c in df_data.columns if c.lower() in ["price", "selling price", "mp price"]), None)
     stock_col = next((c for c in df_data.columns if c.lower() in ["stock", "quantity", "qty", "mp stock"]), None)
+    
     var_col = next((c for c in df_data.columns if c.lower() in ["variation name", "variation", "variation_name"]), None)
+    color_col = next((c for c in df_data.columns if c.lower() in ["color", "colour", "color name", "color_name"]), None)
+    size_col = next((c for c in df_data.columns if c.lower() in ["size", "size_name", "size name"]), None)
     
     img_cols = [c for c in df_data.columns if any(k in c.lower() for k in ["cover image", "item image"]) and not "chart" in c.lower()]
     sc_col = next((c for c in df_data.columns if "size chart" in c.lower()), None)
@@ -1162,9 +1186,14 @@ def parse_live_shopee(df: pd.DataFrame) -> pd.DataFrame:
         price_val = _safe_str(row.get(price_col)) if price_col else "0.0"
         stock_val = _safe_str(row.get(stock_col)) if stock_col else "0"
         
-        var_val = _safe_str(row.get(var_col)) if var_col else ""
-        color_val, size_val = parse_variation_combo(var_val)
-        
+        # Variation parsing (combo or separate)
+        if var_col and not is_empty(row.get(var_col)):
+            var_val = _safe_str(row.get(var_col))
+            color_val, size_val = parse_variation_combo(var_val)
+        else:
+            color_val = _safe_str(row.get(color_col)) if color_col else ""
+            size_val = _safe_str(row.get(size_col)) if size_col else ""
+            
         imgs = [str(row[c]).strip() for c in img_cols if pd.notna(row.get(c)) and str(row[c]).strip() not in ("", "nan", "None")]
         imgs_str = ",".join(imgs)
         sc_val = _safe_str(row.get(sc_col)) if sc_col else ""
@@ -1183,18 +1212,21 @@ def parse_live_shopee(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(records)
 
 def parse_live_tiktok(df: pd.DataFrame) -> pd.DataFrame:
-    if len(df) > 3 and not any(c in df.columns for c in ["Seller SKU", "Product name", "Variation Option"]):
-        df_data = df.iloc[3:].reset_index(drop=True)
-    else:
-        df_data = df
-        
-    df_data = _normalise_cols(df_data)
+    if df.empty:
+        return pd.DataFrame()
+    df_data = _normalise_cols(df.copy())
     
     sku_col = next((c for c in df_data.columns if c.lower() in ["seller sku", "sku", "sellersku"]), None)
+    if sku_col:
+        df_data = _clean_live_df_skipping(df_data, sku_col, "tiktok")
+        
     name_col = next((c for c in df_data.columns if c.lower() in ["product name", "name", "product_name"]), None)
     price_col = next((c for c in df_data.columns if "retail price" in c.lower() or c.lower() == "price"), None)
     qty_col = next((c for c in df_data.columns if c.lower() in ["quantity", "stock", "qty"]), None)
+    
     var_col = next((c for c in df_data.columns if c.lower() in ["variation option", "variation", "variation_option"]), None)
+    color_col = next((c for c in df_data.columns if c.lower() in ["primary variation value (option)", "color", "colour"]), None)
+    size_col = next((c for c in df_data.columns if c.lower() in ["secondary variation value (option)", "size"]), None)
     
     img_cols = [c for c in df_data.columns if any(k in c.lower() for k in ["main image", "image"]) and not "chart" in c.lower()]
     sc_col = next((c for c in df_data.columns if "size chart" in c.lower()), None)
@@ -1209,9 +1241,14 @@ def parse_live_tiktok(df: pd.DataFrame) -> pd.DataFrame:
         price_val = _safe_str(row.get(price_col)) if price_col else "0.0"
         qty_val = _safe_str(row.get(qty_col)) if qty_col else "0"
         
-        var_val = _safe_str(row.get(var_col)) if var_col else ""
-        color_val, size_val = parse_variation_combo(var_val)
-        
+        # Variation parsing (combo or separate)
+        if var_col and not is_empty(row.get(var_col)):
+            var_val = _safe_str(row.get(var_col))
+            color_val, size_val = parse_variation_combo(var_val)
+        else:
+            color_val = _safe_str(row.get(color_col)) if color_col else ""
+            size_val = _safe_str(row.get(size_col)) if size_col else ""
+            
         imgs = [str(row[c]).strip() for c in img_cols if pd.notna(row.get(c)) and str(row[c]).strip() not in ("", "nan", "None")]
         imgs_str = ",".join(imgs)
         sc_val = _safe_str(row.get(sc_col)) if sc_col else ""
@@ -1228,6 +1265,7 @@ def parse_live_tiktok(df: pd.DataFrame) -> pd.DataFrame:
             "ecommerce_status": "Active"
         })
     return pd.DataFrame(records)
+
 
 def process_live_files(uploaded_files, channel: str) -> pd.DataFrame:
     import zipfile
