@@ -313,5 +313,81 @@ class TestValidators(unittest.TestCase):
         self.assertEqual(color_records.iloc[0]["Reference Value"], "Black")
         self.assertEqual(color_records.iloc[0]["Match Status"], "Mismatch")
 
+    def test_post_qc_flow_simulation(self):
+        from listing_qc_validator.utils.validators import _clean_sku, _normalise_article_no
+        
+        # 1. Target sheet has only SKU
+        combined_df = pd.DataFrame([
+            {"sku": "4069161482557", "_original_row_number": 2, "_source_file": "target.xlsx"}
+        ])
+        
+        # 2. Live report has actual listing details
+        consolidated_live = pd.DataFrame([
+            {
+                "sku": "4069161482557",
+                "product_name": "Men's Leather Running Shoes Black Edition (404620_07)",
+                "color_name": "Black",
+                "size": "42",
+                "price": "89.99",
+                "quantity": "10",
+                "images": "https://puma.com/image.jpg",
+                "size_chart": "https://puma.com/sizechart.jpg",
+                "ecommerce_status": "Active"
+            }
+        ])
+        
+        # 3. Map values in post-qc flow
+        sku_to_article = self.content_maps[0]
+        sku_to_gender = self.content_maps[4]
+        
+        article_to_launchdate, article_to_ecomstatus, _ = self.zecom_maps_shopee
+        
+        consolidated_live["_clean_sku"] = consolidated_live["sku"].astype(str).str.strip().apply(_clean_sku)
+        live_dict = consolidated_live.drop_duplicates(subset=["_clean_sku"]).set_index("_clean_sku").to_dict("index")
+        
+        post_qc_records = []
+        for idx, row in combined_df.iterrows():
+            clean_s = _clean_sku(row.get("sku", ""))
+            ref_art = sku_to_article.get(clean_s, "")
+            norm_art = _normalise_article_no(ref_art)
+            ref_ld = article_to_launchdate.get(norm_art, "")
+            live_row = live_dict.get(clean_s, {})
+            gender_val = sku_to_gender.get(clean_s, "")
+            
+            post_qc_records.append({
+                "sku": clean_s,
+                "article_number": ref_art,
+                "launch_date": ref_ld,
+                "ecommerce_status": live_row.get("ecommerce_status", "Inactive"),
+                "gender": gender_val,
+                "product_name": live_row.get("product_name", ""),
+                "color_name": live_row.get("color_name", ""),
+                "size": live_row.get("size", ""),
+                "price": live_row.get("price", "0.0"),
+                "quantity": live_row.get("quantity", "0"),
+                "images": live_row.get("images", ""),
+                "size_chart": live_row.get("size_chart", ""),
+                "_original_row_number": row.get("_original_row_number", idx + 2),
+                "_source_file": row.get("_source_file", "Upload Sheet")
+            })
+            
+        post_qc_df = pd.DataFrame(post_qc_records)
+        
+        # 4. Validate
+        exc_df, val_df, logs = validate_dataframe(
+            post_qc_df,
+            qc_stage="Post QC",
+            channel="Shopee PH",
+            content_df=self.mock_content_df,
+            zecom_df=self.mock_zecom_df,
+            check_live_images=False,
+            is_live_report=True
+        )
+        
+        # We expect no validation failures/errors because all details match correctly
+        # and stock quantity is allowed to be non-zero (since is_live_report is True)
+        errors = exc_df[exc_df["Severity"] == "Error"]
+        self.assertTrue(errors.empty, f"Expected no errors, found: {errors.to_dict('records')}")
+
 if __name__ == '__main__':
     unittest.main()
