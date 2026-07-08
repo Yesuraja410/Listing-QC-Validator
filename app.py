@@ -377,6 +377,76 @@ if target_loaded:
                         all_standardized.append(std_df)
                     combined_df = pd.concat(all_standardized, ignore_index=True)
                     
+                    if qc_stage == "Post QC":
+                        # Validate that live files are uploaded
+                        if not live_files:
+                            st.error("⚠️ Please upload Live Marketplace Reports in the sidebar to run Post QC Validation.")
+                            st.stop()
+                        
+                        consolidated_live = process_live_files(live_files, channel)
+                        if consolidated_live.empty:
+                            st.error("Could not parse any valid listing data from the uploaded live files. Please verify the headers and formats.")
+                            st.stop()
+                        
+                        from utils.validators import build_content_maps, build_zecom_maps, _clean_sku
+                        from utils.file_loaders import _normalise_article_no
+                        
+                        content_maps = build_content_maps(content_df)
+                        zecom_maps = build_zecom_maps(zecom_df, channel)
+                        
+                        sku_to_article = content_maps[0] if content_maps else {}
+                        sku_to_gender = content_maps[4] if content_maps else {}
+                        
+                        article_to_launchdate = zecom_maps[0] if zecom_maps else {}
+                        article_to_ecomstatus = zecom_maps[1] if zecom_maps else {}
+                        
+                        # Index consolidated_live by cleaned SKU for fast lookup
+                        consolidated_live["_clean_sku"] = consolidated_live["sku"].astype(str).str.strip().apply(_clean_sku)
+                        live_dict = consolidated_live.drop_duplicates(subset=["_clean_sku"]).set_index("_clean_sku").to_dict("index")
+                        
+                        # Build a new dataframe for Post QC validation
+                        post_qc_records = []
+                        for idx, row in combined_df.iterrows():
+                            raw_sku = str(row.get("sku", "")).strip()
+                            clean_s = _clean_sku(raw_sku)
+                            if not clean_s:
+                                continue
+                            
+                            # 1. Fetch Article No from Content File
+                            ref_art = sku_to_article.get(clean_s, "")
+                            
+                            # 2. Fetch market place ecom status and Launch date from Zecom File
+                            norm_art = _normalise_article_no(ref_art)
+                            ref_ld = article_to_launchdate.get(norm_art, "")
+                            
+                            # 3. Fetch all other fields from Post QC Live Reports (by matching clean SKU)
+                            live_row = live_dict.get(clean_s, {})
+                            
+                            # Standardize gender: from content file gender
+                            gender_val = sku_to_gender.get(clean_s, "")
+                            
+                            post_qc_records.append({
+                                "sku": clean_s,
+                                "article_number": ref_art,
+                                "launch_date": ref_ld,
+                                "ecommerce_status": live_row.get("ecommerce_status", "Inactive"),
+                                "gender": gender_val,
+                                "product_name": live_row.get("product_name", ""),
+                                "color_name": live_row.get("color_name", ""),
+                                "size": live_row.get("size", ""),
+                                "price": live_row.get("price", "0.0"),
+                                "quantity": live_row.get("quantity", "0"),
+                                "images": live_row.get("images", ""),
+                                "size_chart": live_row.get("size_chart", ""),
+                                "_original_row_number": row.get("_original_row_number", idx + 2),
+                                "_source_file": row.get("_source_file", "Upload Sheet")
+                            })
+                            
+                        if not post_qc_records:
+                            st.error("No valid SKUs found in target listing sheet.")
+                            st.stop()
+                        combined_df = pd.DataFrame(post_qc_records)
+                    
                     # Execute validation rules
                     exc_df, val_df, logs = validate_dataframe(
                         combined_df, 
@@ -386,7 +456,8 @@ if target_loaded:
                         zecom_df=zecom_df,
                         check_live_images=check_live_images,
                         allowed_genders=custom_genders,
-                        allowed_statuses=custom_statuses
+                        allowed_statuses=custom_statuses,
+                        is_live_report=(qc_stage == "Post QC")
                     )
                     
                     st.session_state.val_df = val_df
@@ -484,7 +555,12 @@ if target_loaded:
             qty_ok = qty_excs.empty
             qty_badge = '<span class="qc-status-ok">OK</span>' if qty_ok else '<span class="qc-status-mismatch">Mismatch</span>'
             qty_rows = qty_excs.groupby(["Source File", "Row Number"]).ngroups if not qty_ok else 0
-            qty_text = "Quantity is 0 for all items" if qty_ok else f"{qty_rows} non-zero quantity items found"
+            if qc_stage == "Post QC":
+                qty_text = "All quantities are valid numbers" if qty_ok else f"{qty_rows} invalid quantity values found"
+                qty_target_cond = "Should be valid numeric value"
+            else:
+                qty_text = "Quantity is 0 for all items" if qty_ok else f"{qty_rows} non-zero quantity items found"
+                qty_target_cond = "Quantity must be exactly 0 for all items"
             
             # Build QC Table HTML
             qc_table_html = f"""
@@ -536,7 +612,7 @@ if target_loaded:
                     </tr>
                     <tr>
                         <td style="font-weight: 600;">Quantity Check</td>
-                        <td>Quantity must be exactly 0 for all items</td>
+                        <td>{qty_target_cond}</td>
                         <td>{qty_text}</td>
                         <td style="text-align: center;">{qty_badge}</td>
                     </tr>
