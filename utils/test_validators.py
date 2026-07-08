@@ -389,5 +389,37 @@ class TestValidators(unittest.TestCase):
         errors = exc_df[exc_df["Severity"] == "Error"]
         self.assertTrue(errors.empty, f"Expected no errors, found: {errors.to_dict('records')}")
 
+    def test_lazada_variation_combo_parsing(self):
+        from listing_qc_validator.utils.file_loaders import parse_live_lazada
+        
+        # Mock Lazada dataframe with Variations Combo column and metadata rows skipped
+        df = pd.DataFrame([
+            # 3 metadata instruction rows
+            {"SellerSku": "Instruction 1", "Product Name": "", "MP Stock": "", "MP Price": "", "Variations Combo": ""},
+            {"SellerSku": "Instruction 2", "Product Name": "", "MP Stock": "", "MP Price": "", "Variations Combo": ""},
+            {"SellerSku": "Instruction 3", "Product Name": "", "MP Stock": "", "MP Price": "", "Variations Combo": ""},
+            # Actual data row
+            {
+                "SellerSku": "4069161482557",
+                "Product Name": "Men's Shoes",
+                "MP Stock": "10",
+                "MP Price": "89.99",
+                "Variations Combo": "Nrgy Peach,UK:8",
+                "image 1": "https://puma.com/img.jpg",
+                "size chart": "https://puma.com/sc.jpg"
+            }
+        ])
+        
+        parsed = parse_live_lazada(df)
+        self.assertEqual(len(parsed), 1)
+        row = parsed.iloc[0]
+        self.assertEqual(row["sku"], "4069161482557")
+        self.assertEqual(row["color_name"], "Nrgy Peach")
+        self.assertEqual(row["size"], "UK:8")
+        self.assertEqual(row["price"], "89.99")
+        self.assertEqual(row["quantity"], "10")
+        self.assertEqual(row["images"], "https://puma.com/img.jpg")
+        self.assertEqual(row["size_chart"], "https://puma.com/sc.jpg")
+
 if __name__ == '__main__':
     unittest.main()
