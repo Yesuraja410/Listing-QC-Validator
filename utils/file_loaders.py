@@ -1212,7 +1212,7 @@ def parse_live_lazada(df: pd.DataFrame) -> pd.DataFrame:
     qty_col = next((c for c in df_data.columns if c.lower() in ["quantity", "stock", "qty", "mp stock"]), None)
     price_col = next((c for c in df_data.columns if c.lower() in ["price", "selling price", "mp price"]), None)
     
-    var_col = next((c for c in df_data.columns if c.lower() in ["variation", "variations", "variation combo", "variation_combo"]), None)
+    var_col = next((c for c in df_data.columns if c.lower() in ["variation", "variations", "variation combo", "variation_combo", "variations combo", "variations_combo"]), None)
     color_col = next((c for c in df_data.columns if c.lower() in ["color", "colour", "color name", "color_name"]), None)
     size_col = next((c for c in df_data.columns if c.lower() in ["size", "size_name", "size name"]), None)
     
