@@ -99,6 +99,16 @@ def _clean_sku(val):
         s = s[:-2]
     return s
 
+def is_empty(val) -> bool:
+    if val is None:
+        return True
+    if isinstance(val, (pd.Series, np.ndarray)):
+        if len(val) == 0:
+            return True
+        val = val.iloc[0] if hasattr(val, "iloc") else val[0]
+    s = str(val).strip()
+    return s == "" or s.lower() in ("nan", "none", "<na>", "pd.na")
+
 def _normalise_cols(df):
     df.columns = [_safe_str(c) for c in df.columns]
     return df
