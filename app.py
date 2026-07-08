@@ -37,6 +37,78 @@ from utils.report_generator import (
     generate_comparison_excel_report
 )
 
+# Caching helper functions to avoid reloading large datasets repeatedly
+@st.cache_data
+def cached_load_content(file_bytes, file_name):
+    from utils.file_loaders import load_content
+    class BytesFile:
+        def __init__(self, b, n):
+            self.bytes = b
+            self.name = n
+        def read(self):
+            return self.bytes
+        def seek(self, pos):
+            pass
+    return load_content(BytesFile(file_bytes, file_name))
+
+@st.cache_data
+def cached_load_zecom(file_bytes, file_name, country):
+    from utils.file_loaders import load_zecom
+    class BytesFile:
+        def __init__(self, b, n):
+            self.bytes = b
+            self.name = n
+        def read(self):
+            return self.bytes
+        def seek(self, pos):
+            pass
+    return load_zecom(BytesFile(file_bytes, file_name), country)
+
+@st.cache_data
+def cached_process_live_files(live_files_data, channel):
+    from utils.file_loaders import process_live_files
+    class BytesFile:
+        def __init__(self, b, n):
+            self.bytes = b
+            self.name = n
+        def read(self):
+            return self.bytes
+        def seek(self, pos):
+            pass
+    files = [BytesFile(b, n) for b, n in live_files_data]
+    return process_live_files(files, channel)
+
+@st.cache_data
+def cached_load_excel_all_sheets(file_bytes, file_name, channel):
+    from utils.file_loaders import load_excel_all_sheets
+    class BytesFile:
+        def __init__(self, b, n):
+            self.bytes = b
+            self.name = n
+        def read(self):
+            return self.bytes
+        def seek(self, pos):
+            pass
+    return load_excel_all_sheets(BytesFile(file_bytes, file_name), channel=channel)
+
+@st.cache_data
+def cached_load_file_to_df(file_bytes, file_name, channel):
+    from utils.file_loaders import load_file_to_df
+    class BytesFile:
+        def __init__(self, b, n):
+            self.bytes = b
+            self.name = n
+        def read(self):
+            return self.bytes
+        def seek(self, pos):
+            pass
+    return load_file_to_df(BytesFile(file_bytes, file_name), channel=channel)
+
+@st.cache_data(ttl=600)
+def cached_load_google_sheet(url, channel):
+    from utils.file_loaders import load_google_sheet
+    return load_google_sheet(url, channel=channel)
+
 # Inject custom CSS
 inject_css()
 
@@ -142,12 +214,13 @@ with st.sidebar:
     if uploaded_files:
         for f in uploaded_files:
             try:
+                f_bytes = f.getvalue()
                 if f.name.lower().endswith((".xlsx", ".xls")):
-                    sheets_dict = load_excel_all_sheets(f, channel=channel)
+                    sheets_dict = cached_load_excel_all_sheets(f_bytes, f.name, channel=channel)
                     for s_name, df in sheets_dict.items():
                         upload_dfs[f"{f.name} - {s_name}"] = df
                 else:
-                    df = load_file_to_df(f, channel=channel)
+                    df = cached_load_file_to_df(f_bytes, f.name, channel=channel)
                     upload_dfs[f.name] = df
             except Exception as e:
                 st.error(f"Error loading target file {f.name}: {e}")
@@ -170,7 +243,7 @@ with st.sidebar:
         for i, url in enumerate(gsheet_urls):
             try:
                 with st.spinner(f"Downloading Google Sheet #{i+1}..."):
-                    df = load_google_sheet(url, channel=channel)
+                    df = cached_load_google_sheet(url, channel=channel)
                     id_match = re.search(r"/d/([a-zA-Z0-9-_]+)", url)
                     display_name = f"Google Sheet ({id_match.group(1)[:8]}...)" if id_match else f"Google Sheet #{i+1}"
                     upload_dfs[display_name] = df
@@ -368,8 +441,8 @@ if target_loaded:
         if st.button("🚀 Run QC Validation", type="primary", use_container_width=True):
             with st.spinner("Loading references and running validations..."):
                 try:
-                    content_df = load_content(content_file)
-                    zecom_df = load_zecom(zecom_file, country)
+                    content_df = cached_load_content(content_file.getvalue(), content_file.name)
+                    zecom_df = cached_load_zecom(zecom_file.getvalue(), zecom_file.name, country)
                     
                     all_standardized = []
                     for fn, df in upload_dfs.items():
@@ -383,7 +456,8 @@ if target_loaded:
                             st.error("⚠️ Please upload Live Marketplace Reports in the sidebar to run Post QC Validation.")
                             st.stop()
                         
-                        consolidated_live = process_live_files(live_files, channel)
+                        live_files_data = [(lf.getvalue(), lf.name) for lf in live_files]
+                        consolidated_live = cached_process_live_files(live_files_data, channel)
                         if consolidated_live.empty:
                             st.error("Could not parse any valid listing data from the uploaded live files. Please verify the headers and formats.")
                             st.stop()
