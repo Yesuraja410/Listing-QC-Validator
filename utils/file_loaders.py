@@ -1436,17 +1436,14 @@ def process_live_files(uploaded_files, channel: str) -> pd.DataFrame:
         
     combined = pd.concat(platform_parsed_dfs, ignore_index=True)
     
-    # Merge rows by SKU by selecting first non-empty value for each column
-    def merge_rows(group):
-        merged = {}
-        for col in group.columns:
-            non_empty = group[col].dropna().astype(str).str.strip()
-            non_empty = non_empty[~non_empty.isin(["", "nan", "None"])]
-            if len(non_empty) > 0:
-                merged[col] = non_empty.iloc[0]
-            else:
-                merged[col] = ""
-        return pd.Series(merged)
+    # Merge rows by SKU by selecting first non-empty value for each column vectorially
+    combined_cleaned = combined.copy()
+    for col in combined_cleaned.columns:
+        if col == "sku":
+            continue
+        combined_cleaned[col] = combined_cleaned[col].astype(str).str.strip()
+        combined_cleaned.loc[combined_cleaned[col].isin(["", "nan", "None", "NaN", "<NA>"]), col] = np.nan
         
-    consolidated = combined.groupby("sku", as_index=False).apply(merge_rows)
+    consolidated = combined_cleaned.groupby("sku", as_index=False).first()
+    consolidated = consolidated.fillna("")
     return consolidated
