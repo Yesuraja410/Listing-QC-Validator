@@ -177,7 +177,7 @@ def parse_google_sheets_url(url: str) -> str:
 
 # ── General File Reader ───────────────────────────────────────────────────────
 
-def _read_file(file, header_row=0, skiprows=None):
+def _read_file(file, header_row=0, skiprows=None, usecols_keywords=None):
     if file is None:
         return pd.DataFrame()
     
@@ -192,15 +192,41 @@ def _read_file(file, header_row=0, skiprows=None):
 
     name = filename.lower()
     try:
+        usecols = None
+        if usecols_keywords:
+            try:
+                if name.endswith(".csv"):
+                    df_headers = pd.read_csv(io.BytesIO(raw), header=header_row, skiprows=skiprows, nrows=0)
+                else:
+                    try:
+                        import python_calamine
+                        df_headers = pd.read_excel(io.BytesIO(raw), header=header_row, skiprows=skiprows, nrows=0, engine="calamine")
+                    except ImportError:
+                        df_headers = pd.read_excel(io.BytesIO(raw), header=header_row, skiprows=skiprows, nrows=0)
+                usecols = [h for h in df_headers.columns if any(k in str(h).lower() for k in usecols_keywords)]
+                if not usecols:
+                    usecols = None
+            except Exception:
+                usecols = None
+
         if name.endswith(".csv"):
-            return pd.read_csv(io.BytesIO(raw), header=header_row, skiprows=skiprows, dtype=str)
+            return pd.read_csv(io.BytesIO(raw), header=header_row, skiprows=skiprows, usecols=usecols, dtype=str)
         try:
             import python_calamine
-            return pd.read_excel(io.BytesIO(raw), header=header_row, skiprows=skiprows, dtype=str, engine="calamine")
+            return pd.read_excel(io.BytesIO(raw), header=header_row, skiprows=skiprows, usecols=usecols, dtype=str, engine="calamine")
         except ImportError:
-            return pd.read_excel(io.BytesIO(raw), header=header_row, skiprows=skiprows, dtype=str)
+            return pd.read_excel(io.BytesIO(raw), header=header_row, skiprows=skiprows, usecols=usecols, dtype=str)
     except Exception:
-        return pd.DataFrame()
+        try:
+            if name.endswith(".csv"):
+                return pd.read_csv(io.BytesIO(raw), header=header_row, skiprows=skiprows, dtype=str)
+            try:
+                import python_calamine
+                return pd.read_excel(io.BytesIO(raw), header=header_row, skiprows=skiprows, dtype=str, engine="calamine")
+            except ImportError:
+                return pd.read_excel(io.BytesIO(raw), header=header_row, skiprows=skiprows, dtype=str)
+        except Exception:
+            return pd.DataFrame()
 
 def get_parse_params(channel: str = None):
     if channel:
@@ -801,7 +827,7 @@ def load_tiktok(active_file, inactive_file):
 def load_content(file):
     if file is None:
         return pd.DataFrame()
-    df = _read_file(file)
+    df = _read_file(file, usecols_keywords=["sku", "ean", "barcode", "upc", "article", "color", "colour", "style", "gender", "sex", "uk", "us", "rus", "size"])
     if df.empty:
         return pd.DataFrame()
     df = _normalise_cols(df)
@@ -1370,6 +1396,46 @@ def parse_live_tiktok(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(records)
 
 
+def _read_live_df_optimized(data: bytes, is_csv: bool, header_row: int) -> pd.DataFrame:
+    try:
+        # Read headers first
+        if is_csv:
+            df_headers = pd.read_csv(io.BytesIO(data), header=header_row, nrows=0)
+        else:
+            try:
+                import python_calamine
+                df_headers = pd.read_excel(io.BytesIO(data), header=header_row, nrows=0, engine="calamine")
+            except ImportError:
+                df_headers = pd.read_excel(io.BytesIO(data), header=header_row, nrows=0)
+                
+        headers = df_headers.columns.tolist()
+        keywords = ["sku", "parent", "name", "title", "quantity", "stock", "qty", "price", "variation", "color", "colour", "size", "image", "chart"]
+        usecols = [h for h in headers if any(k in str(h).lower() for k in keywords)]
+        if not usecols:
+            usecols = None
+            
+        if is_csv:
+            return pd.read_csv(io.BytesIO(data), header=header_row, usecols=usecols, dtype=str)
+        else:
+            try:
+                import python_calamine
+                return pd.read_excel(io.BytesIO(data), header=header_row, usecols=usecols, dtype=str, engine="calamine")
+            except ImportError:
+                return pd.read_excel(io.BytesIO(data), header=header_row, usecols=usecols, dtype=str)
+    except Exception:
+        try:
+            if is_csv:
+                return pd.read_csv(io.BytesIO(data), header=header_row, dtype=str)
+            else:
+                try:
+                    import python_calamine
+                    return pd.read_excel(io.BytesIO(data), header=header_row, dtype=str, engine="calamine")
+                except ImportError:
+                    return pd.read_excel(io.BytesIO(data), header=header_row, dtype=str)
+        except Exception:
+            return pd.DataFrame()
+
+
 def process_live_files(uploaded_files, channel: str) -> pd.DataFrame:
     import zipfile
     platform = channel.split()[0].lower()
@@ -1385,31 +1451,18 @@ def process_live_files(uploaded_files, channel: str) -> pd.DataFrame:
                     if entry.lower().endswith((".xlsx", ".xls", ".csv")):
                         with zf.open(entry) as f:
                             data = f.read()
-                            if entry.lower().endswith(".csv"):
-                                h_row = 2 if platform in ["tiktok", "shopee"] else 0
-                                df = pd.read_csv(io.BytesIO(data), header=h_row, dtype=str)
-                            else:
-                                h_row = 2 if platform in ["tiktok", "shopee"] else 0
-                                try:
-                                    import python_calamine
-                                    df = pd.read_excel(io.BytesIO(data), header=h_row, dtype=str, engine="calamine")
-                                except ImportError:
-                                    df = pd.read_excel(io.BytesIO(data), header=h_row, dtype=str)
+                            h_row = 2 if platform in ["tiktok", "shopee"] else 0
+                            is_csv = entry.lower().endswith(".csv")
+                            df = _read_live_df_optimized(data, is_csv, h_row)
                             if not df.empty:
                                 all_dfs.append(df)
         else:
             raw = file.read()
             file.seek(0)
             h_row = 2 if platform in ["tiktok", "shopee"] else 0
+            is_csv = name.endswith(".csv")
             try:
-                if name.endswith(".csv"):
-                    df = pd.read_csv(io.BytesIO(raw), header=h_row, dtype=str)
-                else:
-                    try:
-                        import python_calamine
-                        df = pd.read_excel(io.BytesIO(raw), header=h_row, dtype=str, engine="calamine")
-                    except ImportError:
-                        df = pd.read_excel(io.BytesIO(raw), header=h_row, dtype=str)
+                df = _read_live_df_optimized(raw, is_csv, h_row)
                 if not df.empty:
                     all_dfs.append(df)
             except Exception:
