@@ -421,5 +421,50 @@ class TestValidators(unittest.TestCase):
         self.assertEqual(row["images"], "https://puma.com/img.jpg")
         self.assertEqual(row["size_chart"], "https://puma.com/sc.jpg")
 
+    def test_image_and_size_chart_comparison(self):
+        source_data = pd.DataFrame([
+            {
+                "sku": "4069161482557",
+                "article_number": "404620_07",
+                "size": "42",
+                "product_name": "Men's Shoes",
+                "color_name": "Black",
+                "price": "89.99",
+                "quantity": "0",
+                "images": "https://example.com/img1.jpg",
+                "size_chart": "https://example.com/sc1.jpg",
+                "ecommerce_status": "Active"
+            }
+        ])
+        
+        # Live store with matching images/size charts URLs (using query parameters to ensure normalization logic runs)
+        live_data_matching = pd.DataFrame([
+            {
+                "sku": "4069161482557",
+                "product_name": "Men's Shoes",
+                "color_name": "Black",
+                "price": "89.99",
+                "quantity": "0",
+                "images": "https://example.com/img1.jpg?v=2",
+                "size_chart": "https://example.com/sc1.jpg?v=2",
+                "ecommerce_status": "Active"
+            }
+        ])
+        
+        comp_df, _ = compare_source_and_live(
+            source_data, live_data_matching,
+            match_column="sku",
+            content_df=self.mock_content_df,
+            zecom_df=self.mock_zecom_df,
+            channel="Shopee PH"
+        )
+        
+        # Verify that Images Check and Size Chart Check both indicate "Matching"
+        self.assertFalse(comp_df.empty)
+        row = comp_df.iloc[0]
+        self.assertEqual(row["Images Check"], "Matching")
+        self.assertEqual(row["Size Chart Check"], "Matching")
+        self.assertEqual(row["Match Status"], "Passed")
+
 if __name__ == '__main__':
     unittest.main()
