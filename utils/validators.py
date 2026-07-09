@@ -4,6 +4,77 @@ import pandas as pd
 import numpy as np
 import requests
 from typing import Dict, List, Tuple
+import urllib.request
+import io
+from PIL import Image
+
+_IMAGE_HASH_CACHE = {}
+
+def _normalize_img_url(url):
+    u = str(url).strip()
+    if "?" in u:
+        u = u.split("?")[0]
+    return u.rstrip("/").lower()
+
+def download_and_hash_image(url):
+    url = str(url).strip()
+    if not url:
+        return None, "Empty URL"
+        
+    if url in _IMAGE_HASH_CACHE:
+        return _IMAGE_HASH_CACHE[url]
+        
+    try:
+        req = urllib.request.Request(
+            url, 
+            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+        )
+        with urllib.request.urlopen(req, timeout=5) as response:
+            data = response.read()
+            
+        img = Image.open(io.BytesIO(data)).convert('L').resize((8, 8), Image.Resampling.LANCZOS)
+        pixels = list(img.getdata())
+        avg = sum(pixels) / 64
+        ahash = "".join("1" if p > avg else "0" for p in pixels)
+        
+        res = (ahash, None)
+    except Exception as e:
+        res = (None, str(e))
+        
+    _IMAGE_HASH_CACHE[url] = res
+    return res
+
+def compare_images_by_url(url1, url2):
+    u1 = str(url1).strip()
+    u2 = str(url2).strip()
+    
+    if not u1 or not u2:
+        return "Not Matching"
+        
+    if u1 == u2 or _normalize_img_url(u1) == _normalize_img_url(u2):
+        return "Matching"
+        
+    hash1, err1 = download_and_hash_image(u1)
+    hash2, err2 = download_and_hash_image(u2)
+    
+    if err1 or err2:
+        return "Not Matching"
+        
+    if hash1 and hash2:
+        diff = sum(c1 != c2 for c1, c2 in zip(hash1, hash2))
+        if diff <= 5:
+            return "Matching"
+            
+    return "Not Matching"
+
+def compare_image_lists(val1, val2):
+    u1_list = [u.strip() for u in str(val1).split(",") if u.strip()]
+    u2_list = [u.strip() for u in str(val2).split(",") if u.strip()]
+    
+    if not u1_list or not u2_list:
+        return "Not Matching"
+        
+    return compare_images_by_url(u1_list[0], u2_list[0])
 
 # Default allowed values
 ALLOWED_GENDERS = ["men", "women", "unisex", "kids", "boys", "girls", "male", "female"]
@@ -1061,11 +1132,27 @@ def compare_source_and_live(
         elif live_chk:
             ld_chk_val = "OK"
             
-        img_chk_val = "-"
-        sc_chk_val = "-"
-        if live_chk:
-            img_chk_val = "Error" if "Images:" in qc_det else "OK"
-            sc_chk_val = "Error" if "Size Chart:" in qc_det or "Size chart:" in qc_det else "OK"
+        # Check images matching using our download & hashing comparison
+        img_chk_val = "Not Matching"
+        src_img = src_row.get("images", "") if src_row else ""
+        live_img = live_row.get("images", "") if live_row else ""
+        if src_img and live_img:
+            img_chk_val = compare_image_lists(src_img, live_img)
+        elif not src_img and not live_img:
+            img_chk_val = "Matching"
+        else:
+            img_chk_val = "Missing"
+            
+        # Check size chart matching using download & hashing comparison
+        sc_chk_val = "Not Matching"
+        src_sc = src_row.get("size_chart", "") if src_row else ""
+        live_sc = live_row.get("size_chart", "") if live_row else ""
+        if src_sc and live_sc:
+            sc_chk_val = compare_images_by_url(src_sc, live_sc)
+        elif not src_sc and not live_sc:
+            sc_chk_val = "Matching"
+        else:
+            sc_chk_val = "Missing"
         
         if src_row and live_row:
             matched_count += 1
@@ -1117,6 +1204,10 @@ def compare_source_and_live(
                             is_diff = not np.isclose(s_f, l_f)
                         except (ValueError, TypeError):
                             is_diff = str(s_val).strip().lower() != str(l_val).strip().lower()
+                    elif field == "images":
+                        is_diff = (compare_image_lists(s_val, l_val) == "Not Matching")
+                    elif field == "size_chart":
+                        is_diff = (compare_images_by_url(s_val, l_val) == "Not Matching")
                     else:
                         is_diff = clean_str(s_val).lower() != clean_str(l_val).lower()
                         
