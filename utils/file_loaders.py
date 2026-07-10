@@ -253,7 +253,7 @@ def load_file_to_df(file_or_path, filename: str = None, channel: str = None) -> 
         elif "tiktok" in channel_lower:
             check_cols.extend(["seller sku", "product name", "primary variation value (option)", "secondary variation value (option)"])
             
-    if df.empty or not any(c.lower() in [col.lower() for col in df.columns] for c in check_cols):
+    if df.empty or not any(c.lower() in [str(col).lower() for col in df.columns] for c in check_cols):
         df_normal = _read_file(file_or_path, header_row=0, skiprows=None)
         if not df_normal.empty:
             df_normal["_excel_row"] = compute_excel_row_numbers(len(df_normal), 0, None)
@@ -327,7 +327,7 @@ def load_excel_all_sheets(file_or_path, channel: str = None) -> dict:
                         check_cols.extend(["sellersku", "name", "variation"])
                     elif "tiktok" in channel_lower:
                         check_cols.extend(["seller sku", "product name", "primary variation value (option)", "secondary variation value (option)"])
-                if df.empty or not any(c.lower() in [col.lower() for col in df.columns] for c in check_cols):
+                if df.empty or not any(c.lower() in [str(col).lower() for col in df.columns] for c in check_cols):
                     df = xl.parse(s_name, dtype=str)
                     is_fallback = True
             except Exception:
@@ -359,7 +359,7 @@ def load_google_sheet(url: str, channel: str = None) -> pd.DataFrame:
         elif "tiktok" in channel_lower:
             check_cols.extend(["seller sku", "product name", "primary variation value (option)", "secondary variation value (option)"])
             
-    if df.empty or not any(c.lower() in [col.lower() for col in df.columns] for c in check_cols):
+    if df.empty or not any(c.lower() in [str(col).lower() for col in df.columns] for c in check_cols):
         df_normal = pd.read_csv(csv_url, dtype=str)
         if not df_normal.empty:
             df_normal["_excel_row"] = compute_excel_row_numbers(len(df_normal), 0, None)
