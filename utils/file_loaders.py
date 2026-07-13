@@ -9,7 +9,12 @@ import numpy as np
 COLUMN_SYNONYMS = {
     "sku": [
         "seller sku", "sku", "seller_sku", "sellersku", "ean", "barcode", "upc", 
-        "item code", "item_code", "product sku", "product_sku", "seller sku sku"
+        "item code", "item_code", "product sku", "product_sku", "seller sku sku",
+        "variationskus", "variationsku", "variation skus", "variation_skus"
+    ],
+    "product_id": [
+        "product id", "product_id", "item id", "item_id", "product ID", "itemId", "productId",
+        "spuid", "spu id", "spu_id", "product_code", "product code"
     ],
     "article_number": [
         "article number", "article no", "article", "article_number", "art no", 
@@ -54,7 +59,7 @@ COLUMN_SYNONYMS = {
     "images": [
         "images", "image", "image url", "image_url", "image urls", 
         "image 1", "image link", "image_link", "product images", 
-        "image_urls", "image_links"
+        "image_urls", "image_links", "product image url(s)", "product image urls"
     ],
     "size_chart": [
         "size chart", "size_chart", "size chart url", "size_chart_url", 
@@ -64,6 +69,7 @@ COLUMN_SYNONYMS = {
 
 CANONICAL_LABELS = {
     "sku": "Seller SKU",
+    "product_id": "Product ID",
     "article_number": "Article Number",
     "ecommerce_status": "E-commerce Status",
     "launch_date": "Launch Date",
@@ -1242,7 +1248,13 @@ def parse_live_lazada(df: pd.DataFrame) -> pd.DataFrame:
     color_col = next((c for c in df_data.columns if c.lower() in ["color", "colour", "color name", "color_name"]), None)
     size_col = next((c for c in df_data.columns if c.lower() in ["size", "size_name", "size name"]), None)
     
-    img_cols = [c for c in df_data.columns if "image" in c.lower() and not "chart" in c.lower()]
+    img_cols = []
+    for i in range(1, 9):
+        col = next((c for c in df_data.columns if c.lower().replace(" ", "").replace("_", "") in [f"images{i}", f"image{i}"]), None)
+        if col:
+            img_cols.append(col)
+    if not img_cols:
+        img_cols = [c for c in df_data.columns if "image" in c.lower() and not "chart" in c.lower()]
     sc_col = next((c for c in df_data.columns if "size" in c.lower() and "chart" in c.lower()), None)
     
     records = []
@@ -1290,6 +1302,7 @@ def parse_live_shopee(df: pd.DataFrame) -> pd.DataFrame:
         df_data = _clean_live_df_skipping(df_data, sku_col, "shopee")
         
     parent_col = next((c for c in df_data.columns if c.lower() in ["parent sku", "parentsku", "parent_sku"]), None)
+    prod_col = next((c for c in df_data.columns if c.lower().replace(" ", "").replace("_", "") in ["productid", "itemid"]), None)
     name_col = next((c for c in df_data.columns if c.lower() in ["product name", "name", "product_name"]), None)
     price_col = next((c for c in df_data.columns if c.lower() in ["price", "selling price", "mp price"]), None)
     stock_col = next((c for c in df_data.columns if c.lower() in ["stock", "quantity", "qty", "mp stock"]), None)
@@ -1298,15 +1311,19 @@ def parse_live_shopee(df: pd.DataFrame) -> pd.DataFrame:
     color_col = next((c for c in df_data.columns if c.lower() in ["color", "colour", "color name", "color_name"]), None)
     size_col = next((c for c in df_data.columns if c.lower() in ["size", "size_name", "size name"]), None)
     
-    img_cols = [c for c in df_data.columns if any(k in c.lower() for k in ["cover image", "item image"]) and not "chart" in c.lower()]
+    img_cols = [c for c in df_data.columns if any(k in c.lower() for k in ["cover image", "item image", "image"]) and not "chart" in c.lower()]
     sc_col = next((c for c in df_data.columns if "size chart" in c.lower()), None)
     
     records = []
     for _, row in df_data.iterrows():
         sku_val = _clean_sku(row.get(sku_col)) if sku_col else ""
         parent_val = _clean_sku(row.get(parent_col)) if parent_col else ""
+        prod_val = _safe_str(row.get(prod_col)) if prod_col else ""
+        
         if not sku_val and parent_val:
             sku_val = parent_val
+        if not sku_val and prod_val:
+            sku_val = prod_val
             
         if not sku_val:
             continue
@@ -1329,6 +1346,7 @@ def parse_live_shopee(df: pd.DataFrame) -> pd.DataFrame:
         
         records.append({
             "sku": sku_val,
+            "product_id": prod_val,
             "product_name": name_val,
             "color_name": color_val,
             "size": size_val,
@@ -1349,6 +1367,7 @@ def parse_live_tiktok(df: pd.DataFrame) -> pd.DataFrame:
     if sku_col:
         df_data = _clean_live_df_skipping(df_data, sku_col, "tiktok")
         
+    prod_col = next((c for c in df_data.columns if c.lower().replace(" ", "").replace("_", "") in ["productid", "itemid", "spuid"]), None)
     name_col = next((c for c in df_data.columns if c.lower() in ["product name", "name", "product_name"]), None)
     price_col = next((c for c in df_data.columns if "retail price" in c.lower() or c.lower() == "price"), None)
     qty_col = next((c for c in df_data.columns if c.lower() in ["quantity", "stock", "qty"]), None)
@@ -1363,6 +1382,11 @@ def parse_live_tiktok(df: pd.DataFrame) -> pd.DataFrame:
     records = []
     for _, row in df_data.iterrows():
         sku_val = _clean_sku(row.get(sku_col)) if sku_col else ""
+        prod_val = _safe_str(row.get(prod_col)) if prod_col else ""
+        
+        if not sku_val and prod_val:
+            sku_val = prod_val
+            
         if not sku_val:
             continue
             
@@ -1384,6 +1408,7 @@ def parse_live_tiktok(df: pd.DataFrame) -> pd.DataFrame:
         
         records.append({
             "sku": sku_val,
+            "product_id": prod_val,
             "product_name": name_val,
             "color_name": color_val,
             "size": size_val,
@@ -1395,12 +1420,58 @@ def parse_live_tiktok(df: pd.DataFrame) -> pd.DataFrame:
         })
     return pd.DataFrame(records)
 
+def parse_live_zalora(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return pd.DataFrame()
+    df_data = _normalise_cols(df.copy())
+    
+    sku_col = next((c for c in df_data.columns if c.lower().replace(" ", "").replace("_", "") in ["variationskus", "variationsku"]), None)
+    if not sku_col:
+        sku_col = next((c for c in df_data.columns if c.lower() in ["sku", "variation sku", "seller sku"]), None)
+        
+    name_col = next((c for c in df_data.columns if c.lower() in ["product name", "name", "product_name"]), None)
+    img_cols = [c for c in df_data.columns if "image" in c.lower() and not "chart" in c.lower()]
+    sc_col = next((c for c in df_data.columns if "size chart" in c.lower() or "sizechart" in c.lower()), None)
+    
+    records = []
+    for _, row in df_data.iterrows():
+        sku_raw = _safe_str(row.get(sku_col)) if sku_col else ""
+        if not sku_raw:
+            continue
+            
+        skus = [s.strip() for s in sku_raw.split(",") if s.strip()]
+        if not skus:
+            continue
+            
+        name_val = _safe_str(row.get(name_col)) if name_col else ""
+        imgs = [str(row[c]).strip() for c in img_cols if pd.notna(row.get(c)) and str(row[c]).strip() not in ("", "nan", "None")]
+        imgs_str = ",".join(imgs)
+        sc_val = _safe_str(row.get(sc_col)) if sc_col else ""
+        
+        for sku_val in skus:
+            clean_s = _clean_sku(sku_val)
+            if not clean_s:
+                continue
+            records.append({
+                "sku": clean_s,
+                "product_name": name_val,
+                "color_name": "",
+                "size": "",
+                "price": "0.0",
+                "quantity": "0",
+                "images": imgs_str,
+                "size_chart": sc_val,
+                "ecommerce_status": "Active"
+            })
+    return pd.DataFrame(records)
 
-def _read_live_df_optimized(data: bytes, is_csv: bool, header_row: int) -> pd.DataFrame:
+
+def _read_live_df_optimized(data: bytes, is_csv: bool, header_row: int, platform: str = None) -> pd.DataFrame:
     try:
         # Read headers first
         if is_csv:
-            df_headers = pd.read_csv(io.BytesIO(data), header=header_row, nrows=0)
+            encoding = "cp1252" if platform == "zalora" else None
+            df_headers = pd.read_csv(io.BytesIO(data), header=header_row, nrows=0, encoding=encoding)
         else:
             try:
                 import python_calamine
@@ -1409,13 +1480,14 @@ def _read_live_df_optimized(data: bytes, is_csv: bool, header_row: int) -> pd.Da
                 df_headers = pd.read_excel(io.BytesIO(data), header=header_row, nrows=0)
                 
         headers = df_headers.columns.tolist()
-        keywords = ["sku", "parent", "name", "title", "quantity", "stock", "qty", "price", "variation", "color", "colour", "size", "image", "chart"]
+        keywords = ["sku", "parent", "name", "title", "quantity", "stock", "qty", "price", "variation", "color", "colour", "size", "image", "chart", "variationskus", "productid", "itemid"]
         usecols = [h for h in headers if any(k in str(h).lower() for k in keywords)]
         if not usecols:
             usecols = None
             
         if is_csv:
-            return pd.read_csv(io.BytesIO(data), header=header_row, usecols=usecols, dtype=str)
+            encoding = "cp1252" if platform == "zalora" else None
+            return pd.read_csv(io.BytesIO(data), header=header_row, usecols=usecols, dtype=str, encoding=encoding)
         else:
             try:
                 import python_calamine
@@ -1425,7 +1497,8 @@ def _read_live_df_optimized(data: bytes, is_csv: bool, header_row: int) -> pd.Da
     except Exception:
         try:
             if is_csv:
-                return pd.read_csv(io.BytesIO(data), header=header_row, dtype=str)
+                encoding = "cp1252" if platform == "zalora" else None
+                return pd.read_csv(io.BytesIO(data), header=header_row, dtype=str, encoding=encoding)
             else:
                 try:
                     import python_calamine
@@ -1453,7 +1526,7 @@ def process_live_files(uploaded_files, channel: str) -> pd.DataFrame:
                             data = f.read()
                             h_row = 2 if platform in ["tiktok", "shopee"] else 0
                             is_csv = entry.lower().endswith(".csv")
-                            df = _read_live_df_optimized(data, is_csv, h_row)
+                            df = _read_live_df_optimized(data, is_csv, h_row, platform=platform)
                             if not df.empty:
                                 all_dfs.append(df)
         else:
@@ -1462,7 +1535,7 @@ def process_live_files(uploaded_files, channel: str) -> pd.DataFrame:
             h_row = 2 if platform in ["tiktok", "shopee"] else 0
             is_csv = name.endswith(".csv")
             try:
-                df = _read_live_df_optimized(raw, is_csv, h_row)
+                df = _read_live_df_optimized(raw, is_csv, h_row, platform=platform)
                 if not df.empty:
                     all_dfs.append(df)
             except Exception:
@@ -1479,6 +1552,8 @@ def process_live_files(uploaded_files, channel: str) -> pd.DataFrame:
             parsed = parse_live_shopee(df)
         elif platform == "tiktok":
             parsed = parse_live_tiktok(df)
+        elif platform == "zalora":
+            parsed = parse_live_zalora(df)
         else:
             parsed = df
         if not parsed.empty:
@@ -1492,11 +1567,17 @@ def process_live_files(uploaded_files, channel: str) -> pd.DataFrame:
     # Merge rows by SKU by selecting first non-empty value for each column vectorially
     combined_cleaned = combined.copy()
     for col in combined_cleaned.columns:
-        if col == "sku":
+        if col in ["sku", "product_id"]:
             continue
         combined_cleaned[col] = combined_cleaned[col].astype(str).str.strip()
         combined_cleaned.loc[combined_cleaned[col].isin(["", "nan", "None", "NaN", "<NA>"]), col] = np.nan
         
-    consolidated = combined_cleaned.groupby("sku", as_index=False).first()
+    if platform in ["shopee", "tiktok"] and "product_id" in combined_cleaned.columns:
+        combined_cleaned["product_id"] = combined_cleaned["product_id"].astype(str).str.strip()
+        combined_cleaned.loc[combined_cleaned["product_id"].isin(["", "nan", "None", "NaN", "<NA>"]), "product_id"] = combined_cleaned["sku"]
+        consolidated = combined_cleaned.groupby("product_id", as_index=False).first()
+    else:
+        consolidated = combined_cleaned.groupby("sku", as_index=False).first()
+        
     consolidated = consolidated.fillna("")
     return consolidated
