@@ -459,12 +459,90 @@ class TestValidators(unittest.TestCase):
             channel="Shopee PH"
         )
         
-        # Verify that Images Check and Size Chart Check both indicate "Matching"
-        self.assertFalse(comp_df.empty)
-        row = comp_df.iloc[0]
-        self.assertEqual(row["Images Check"], "Matching")
+        # Verify that matching rows are filtered out from detailed discrepancies sheet
+        self.assertTrue(comp_df.empty)
+
+        # Now test a mismatch case
+        live_data_mismatched = pd.DataFrame([
+            {
+                "sku": "4069161482557",
+                "product_name": "Men's Shoes",
+                "color_name": "Black",
+                "price": "89.99",
+                "quantity": "0",
+                "images": "https://example.com/different_img.jpg",
+                "size_chart": "https://example.com/sc1.jpg",
+                "ecommerce_status": "Active"
+            }
+        ])
+        
+        comp_df_mismatched, _ = compare_source_and_live(
+            source_data, live_data_mismatched,
+            match_column="sku",
+            content_df=self.mock_content_df,
+            zecom_df=self.mock_zecom_df,
+            channel="Shopee PH"
+        )
+        
+        self.assertFalse(comp_df_mismatched.empty)
+        row = comp_df_mismatched.iloc[0]
+        self.assertEqual(row["Images Check"], "Not Matching")
         self.assertEqual(row["Size Chart Check"], "Matching")
-        self.assertEqual(row["Match Status"], "Passed")
+        self.assertEqual(row["Match Status"], "Mismatch")
+
+    def test_lazada_pairwise_images_check(self):
+        from listing_qc_validator.utils.file_loaders import parse_live_lazada
+        # Test Lazada Images1 through Images8 check
+        df = pd.DataFrame([{
+            "SellerSku": "SKU1",
+            "Images1": "http://img1.jpg",
+            "Images2": "http://img2.jpg",
+            "MP Stock": "0",
+            "MP Price": "89.99"
+        }])
+        parsed = parse_live_lazada(df)
+        self.assertEqual(parsed.iloc[0]["images"], "http://img1.jpg,http://img2.jpg")
+
+    def test_shopee_product_id_matching(self):
+        # Target has Product ID and comma-separated images
+        source_df = pd.DataFrame([{
+            "sku": "SKU_VAR1",
+            "product_id": "PROD123",
+            "images": "http://img1.jpg,http://img2.jpg",
+            "price": "89.99",
+            "quantity": "0",
+            "article_number": "404620_07",
+            "size": "42"
+        }])
+        # Live has Product ID and comma-separated images
+        live_df = pd.DataFrame([{
+            "sku": "SKU_VAR1",
+            "product_id": "PROD123",
+            "images": "http://img1.jpg,http://img2.jpg",
+            "price": "89.99",
+            "quantity": "0"
+        }])
+        comp_df, _ = compare_source_and_live(
+            source_df, live_df,
+            match_column="sku",
+            content_df=self.mock_content_df,
+            zecom_df=self.mock_zecom_df,
+            channel="Shopee PH"
+        )
+        self.assertTrue(comp_df.empty) # Since all match, discrepancy report is empty!
+
+    def test_zalora_skus_splitting(self):
+        from listing_qc_validator.utils.file_loaders import parse_live_zalora
+        df = pd.DataFrame([{
+            "VariationSkus": "SKU_Z1, SKU_Z2",
+            "Image1": "http://img1.jpg",
+            "size chart": "http://sc.jpg"
+        }])
+        parsed = parse_live_zalora(df)
+        self.assertEqual(len(parsed), 2)
+        self.assertEqual(parsed.iloc[0]["sku"], "SKU_Z1")
+        self.assertEqual(parsed.iloc[1]["sku"], "SKU_Z2")
+        self.assertEqual(parsed.iloc[0]["images"], "http://img1.jpg")
 
 if __name__ == '__main__':
     unittest.main()
