@@ -1572,7 +1572,12 @@ def process_live_files(uploaded_files, channel: str) -> pd.DataFrame:
         combined_cleaned[col] = combined_cleaned[col].astype(str).str.strip()
         combined_cleaned.loc[combined_cleaned[col].isin(["", "nan", "None", "NaN", "<NA>"]), col] = np.nan
         
-    if platform in ["shopee", "tiktok"] and "product_id" in combined_cleaned.columns:
+    if platform == "shopee" and "product_id" in combined_cleaned.columns:
+        combined_cleaned["product_id"] = combined_cleaned["product_id"].astype(str).str.strip()
+        combined_cleaned.loc[combined_cleaned["product_id"].isin(["", "nan", "None", "NaN", "<NA>"]), "product_id"] = combined_cleaned["sku"]
+        combined_cleaned["color_name"] = combined_cleaned["color_name"].astype(str).str.strip().str.lower()
+        consolidated = combined_cleaned.groupby(["product_id", "color_name"], as_index=False).first()
+    elif platform == "tiktok" and "product_id" in combined_cleaned.columns:
         combined_cleaned["product_id"] = combined_cleaned["product_id"].astype(str).str.strip()
         combined_cleaned.loc[combined_cleaned["product_id"].isin(["", "nan", "None", "NaN", "<NA>"]), "product_id"] = combined_cleaned["sku"]
         consolidated = combined_cleaned.groupby("product_id", as_index=False).first()
