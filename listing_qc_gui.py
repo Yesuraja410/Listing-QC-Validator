@@ -333,8 +333,12 @@ class ListingQCGUI:
                 article_to_launchdate = zecom_maps[0] if zecom_maps else {}
                 
                 # Fetch live listings dict or product_id for fast lookup
+                # Fetch live listings dict or product_id for fast lookup
                 is_shopee_or_tiktok = chan and any(p in chan.lower() for p in ["shopee", "tiktok"])
-                if is_shopee_or_tiktok and "product_id" in df_live.columns:
+                is_shopee = chan and "shopee" in chan.lower()
+                if is_shopee and "product_id" in df_live.columns:
+                    df_live["_match_key"] = df_live["product_id"].astype(str).str.strip() + " | " + df_live["color_name"].astype(str).str.strip().str.lower()
+                elif is_shopee_or_tiktok and "product_id" in df_live.columns:
                     df_live["_match_key"] = df_live["product_id"].astype(str).str.strip()
                 else:
                     df_live["_match_key"] = df_live["sku"].astype(str).str.strip().apply(_clean_sku)
@@ -348,7 +352,12 @@ class ListingQCGUI:
                         continue
                     
                     prod_id_val = str(row.get("product_id", "")).strip()
-                    match_k = prod_id_val if is_shopee_or_tiktok and prod_id_val else clean_s
+                    if is_shopee and prod_id_val:
+                        match_k = prod_id_val + " | " + str(row.get("color_name", "")).strip().lower()
+                    elif is_shopee_or_tiktok and prod_id_val:
+                        match_k = prod_id_val
+                    else:
+                        match_k = clean_s
                     
                     ref_art = sku_to_article.get(clean_s, "")
                     norm_art = _normalise_article_no(ref_art)
