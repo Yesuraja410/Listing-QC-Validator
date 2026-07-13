@@ -335,7 +335,7 @@ def generate_comparison_excel_report(comp_df: pd.DataFrame, summary_metrics: Dic
         for r in range(len(comp_df)):
             row_idx = 4 + r
             base_format = even_row_fmt if r % 2 == 0 else odd_row_fmt
-            status = str(comp_df.iloc[r, 7]) if pd.notna(comp_df.iloc[r, 7]) else "" # Match Status is now at index 7
+            status = str(comp_df.iloc[r, 8]) if pd.notna(comp_df.iloc[r, 8]) else ""
             
             for c in range(len(comp_df.columns)):
                 val = comp_df.iloc[r, c]
@@ -345,7 +345,7 @@ def generate_comparison_excel_report(comp_df: pd.DataFrame, summary_metrics: Dic
                 cell_format = base_format
                 
                 # Check for Match Status cell override
-                if c == 7:
+                if c == 8:
                     if "Passed" in val_str:
                         cell_format = green_fill
                     elif "Mismatch" in val_str or "Failed" in val_str:
@@ -353,8 +353,8 @@ def generate_comparison_excel_report(comp_df: pd.DataFrame, summary_metrics: Dic
                     elif "Warning" in val_str:
                         cell_format = yellow_fill
                 
-                # Check for Audit Checks cells override (indices 9 to 16)
-                elif c >= 9 and c <= 16:
+                # Check for Audit Checks cells override (indices 10 to 17)
+                elif c >= 10 and c <= 17:
                     if val_str in ["OK", "Yes", "Passed"]:
                         cell_format = green_fill
                     elif val_str in ["Mismatch", "Error", "Failed"]:
