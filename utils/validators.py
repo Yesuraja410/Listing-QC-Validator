@@ -74,7 +74,15 @@ def compare_image_lists(val1, val2):
     if not u1_list or not u2_list:
         return "Not Matching"
         
-    return compare_images_by_url(u1_list[0], u2_list[0])
+    if len(u1_list) != len(u2_list):
+        return "Not Matching"
+        
+    for u1, u2 in zip(u1_list, u2_list):
+        res = compare_images_by_url(u1, u2)
+        if res != "Matching":
+            return "Not Matching"
+            
+    return "Matching"
 
 # Default allowed values
 ALLOWED_GENDERS = ["men", "women", "unisex", "kids", "boys", "girls", "male", "female"]
@@ -1041,22 +1049,37 @@ def compare_source_and_live(
     """
     comparison_records = []
     
+    is_shopee_or_tiktok = channel and any(p in channel.lower() for p in ["shopee", "tiktok"])
+    
+    match_col = match_column
+    if is_shopee_or_tiktok:
+        if "product_id" in source_df.columns and "product_id" in live_df.columns:
+            match_col = "product_id"
+            
     src_clean = source_df.copy()
-    src_clean[match_column] = src_clean[match_column].astype(str).str.strip().apply(_clean_sku)
-    src_clean = src_clean[src_clean[match_column] != ""]
-    
+    if match_col == "product_id":
+        src_clean[match_col] = src_clean[match_col].astype(str).str.strip()
+        src_clean = src_clean[src_clean[match_col] != ""]
+    else:
+        src_clean[match_col] = src_clean[match_col].astype(str).str.strip().apply(_clean_sku)
+        src_clean = src_clean[src_clean[match_col] != ""]
+        
     live_clean = live_df.copy()
-    live_clean[match_column] = live_clean[match_column].astype(str).str.strip().apply(_clean_sku)
-    live_clean = live_clean[live_clean[match_column] != ""]
-    
-    composite_match = "size" in src_clean.columns and "size" in live_clean.columns
+    if match_col == "product_id":
+        live_clean[match_col] = live_clean[match_col].astype(str).str.strip()
+        live_clean = live_clean[live_clean[match_col] != ""]
+    else:
+        live_clean[match_col] = live_clean[match_col].astype(str).str.strip().apply(_clean_sku)
+        live_clean = live_clean[live_clean[match_col] != ""]
+        
+    composite_match = ("size" in src_clean.columns and "size" in live_clean.columns) and (match_col != "product_id")
     
     if composite_match:
-        src_clean["_match_key"] = src_clean[match_column] + " | " + src_clean["size"].astype(str).str.strip().apply(correct_size).str.lower()
-        live_clean["_match_key"] = live_clean[match_column] + " | " + live_clean["size"].astype(str).str.strip().apply(correct_size).str.lower()
+        src_clean["_match_key"] = src_clean[match_col] + " | " + src_clean["size"].astype(str).str.strip().apply(correct_size).str.lower()
+        live_clean["_match_key"] = live_clean[match_col] + " | " + live_clean["size"].astype(str).str.strip().apply(correct_size).str.lower()
         key_col = "_match_key"
     else:
-        key_col = match_column
+        key_col = match_col
         
     # Deduplicate match keys to make dict conversion unique
     src_clean = src_clean.drop_duplicates(subset=[key_col])
@@ -1071,7 +1094,8 @@ def compare_source_and_live(
     if content_df is not None and zecom_df is not None and channel is not None:
         # Map live_clean columns to standard validation columns
         live_std = pd.DataFrame()
-        live_std["sku"] = live_clean[match_column]
+        live_std["sku"] = live_clean["sku"] if "sku" in live_clean.columns else live_clean[match_col]
+        live_std["product_id"] = live_clean["product_id"] if "product_id" in live_clean.columns else ""
         live_std["article_number"] = ""
         live_std["launch_date"] = ""
         live_std["gender"] = ""
@@ -1099,7 +1123,10 @@ def compare_source_and_live(
         if composite_match:
             live_val_df["_match_key"] = live_val_df["sku"].astype(str).str.strip().apply(_clean_sku) + " | " + live_val_df["size"].astype(str).str.strip().apply(correct_size).str.lower()
         else:
-            live_val_df["_match_key"] = live_val_df["sku"].astype(str).str.strip().apply(_clean_sku)
+            if match_col == "product_id":
+                live_val_df["_match_key"] = live_val_df["product_id"].astype(str).str.strip()
+            else:
+                live_val_df["_match_key"] = live_val_df["sku"].astype(str).str.strip().apply(_clean_sku)
         live_val_dict = live_val_df.drop_duplicates(subset=["_match_key"]).set_index("_match_key").to_dict('index')
         
     all_keys = set(src_dict.keys()).union(set(live_dict.keys()))
@@ -1153,6 +1180,8 @@ def compare_source_and_live(
             sc_chk_val = "Matching"
         else:
             sc_chk_val = "Missing"
+            
+        p_id = src_row.get("product_id", "") if src_row else live_row.get("product_id", "")
         
         if src_row and live_row:
             matched_count += 1
@@ -1222,8 +1251,9 @@ def compare_source_and_live(
                         ref_val = live_chk.get("ref_rrp", "-")
                     elif field == "ecommerce_status":
                         ref_val = live_chk.get("Zeocm Status", "-")
-                    
+                        
                     comparison_records.append({
+                        "Product ID": p_id,
                         "Article Number": art_num,
                         "Size": sz,
                         "Product Name": prod_name,
@@ -1242,11 +1272,12 @@ def compare_source_and_live(
                         "Images Check": img_chk_val,
                         "Size Chart Check": sc_chk_val
                     })
-            
+                    
             if row_mismatches:
                 mismatch_count += 1
             else:
                 comparison_records.append({
+                    "Product ID": p_id,
                     "Article Number": art_num,
                     "Size": sz,
                     "Product Name": prod_name,
@@ -1269,6 +1300,7 @@ def compare_source_and_live(
         elif src_row:
             missing_in_live += 1
             comparison_records.append({
+                "Product ID": p_id,
                 "Article Number": src_row.get("article_number", ""),
                 "Size": src_row.get("size", "N/A"),
                 "Product Name": src_row.get("product_name", ""),
@@ -1290,6 +1322,7 @@ def compare_source_and_live(
         else:
             missing_in_source += 1
             comparison_records.append({
+                "Product ID": p_id,
                 "Article Number": live_row.get("Article No", live_row.get("article_number", "Unknown")),
                 "Size": live_row.get("size", "N/A"),
                 "Product Name": live_row.get("product_name", "Unknown"),
@@ -1319,9 +1352,10 @@ def compare_source_and_live(
     
     if comparison_records:
         comp_df = pd.DataFrame(comparison_records)
+        comp_df = comp_df[comp_df["Match Status"] != "Passed"].reset_index(drop=True)
     else:
         comp_df = pd.DataFrame(columns=[
-            "Article Number", "Size", "Product Name", "Comparison Field", "Source Value", "Live Value", "Reference Value",
+            "Product ID", "Article Number", "Size", "Product Name", "Comparison Field", "Source Value", "Live Value", "Reference Value",
             "Match Status", "Description", "zEcom Status Check", "Launch Date Check", "Gender Check", 
             "Color Check", "Size Check", "RRP Check", "Images Check", "Size Chart Check"
         ])
