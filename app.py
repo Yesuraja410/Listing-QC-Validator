@@ -476,8 +476,11 @@ if target_loaded:
                         
                         # Index consolidated_live by cleaned SKU or product_id for fast lookup
                         is_shopee_or_tiktok = channel and any(p in channel.lower() for p in ["shopee", "tiktok"])
+                        is_shopee = channel and "shopee" in channel.lower()
                         
-                        if is_shopee_or_tiktok and "product_id" in consolidated_live.columns:
+                        if is_shopee and "product_id" in consolidated_live.columns:
+                            consolidated_live["_match_key"] = consolidated_live["product_id"].astype(str).str.strip() + " | " + consolidated_live["color_name"].astype(str).str.strip().str.lower()
+                        elif is_shopee_or_tiktok and "product_id" in consolidated_live.columns:
                             consolidated_live["_match_key"] = consolidated_live["product_id"].astype(str).str.strip()
                         else:
                             consolidated_live["_match_key"] = consolidated_live["sku"].astype(str).str.strip().apply(_clean_sku)
@@ -493,7 +496,12 @@ if target_loaded:
                                 continue
                                 
                             prod_id_val = str(row.get("product_id", "")).strip()
-                            match_k = prod_id_val if is_shopee_or_tiktok and prod_id_val else clean_s
+                            if is_shopee and prod_id_val:
+                                match_k = prod_id_val + " | " + str(row.get("color_name", "")).strip().lower()
+                            elif is_shopee_or_tiktok and prod_id_val:
+                                match_k = prod_id_val
+                            else:
+                                match_k = clean_s
                             
                             # 1. Fetch Article No from Content File
                             ref_art = sku_to_article.get(clean_s, "")
