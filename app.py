@@ -38,7 +38,7 @@ from utils.report_generator import (
 )
 
 # Caching helper functions to avoid reloading large datasets repeatedly
-@st.cache_data
+@st.cache_data(max_entries=2)
 def cached_load_content(file_bytes, file_name):
     from utils.file_loaders import load_content
     class BytesFile:
@@ -51,7 +51,7 @@ def cached_load_content(file_bytes, file_name):
             pass
     return load_content(BytesFile(file_bytes, file_name))
 
-@st.cache_data
+@st.cache_data(max_entries=2)
 def cached_load_zecom(file_bytes, file_name, country):
     from utils.file_loaders import load_zecom
     class BytesFile:
@@ -64,7 +64,7 @@ def cached_load_zecom(file_bytes, file_name, country):
             pass
     return load_zecom(BytesFile(file_bytes, file_name), country)
 
-@st.cache_data
+@st.cache_data(max_entries=2)
 def cached_process_live_files(live_files_data, channel):
     from utils.file_loaders import process_live_files
     class BytesFile:
@@ -78,7 +78,7 @@ def cached_process_live_files(live_files_data, channel):
     files = [BytesFile(b, n) for b, n in live_files_data]
     return process_live_files(files, channel)
 
-@st.cache_data
+@st.cache_data(max_entries=2)
 def cached_load_excel_all_sheets(file_bytes, file_name, channel):
     from utils.file_loaders import load_excel_all_sheets
     class BytesFile:
@@ -91,7 +91,7 @@ def cached_load_excel_all_sheets(file_bytes, file_name, channel):
             pass
     return load_excel_all_sheets(BytesFile(file_bytes, file_name), channel=channel)
 
-@st.cache_data
+@st.cache_data(max_entries=2)
 def cached_load_file_to_df(file_bytes, file_name, channel):
     from utils.file_loaders import load_file_to_df
     class BytesFile:
@@ -474,9 +474,15 @@ if target_loaded:
                         article_to_launchdate = zecom_maps[0] if zecom_maps else {}
                         article_to_ecomstatus = zecom_maps[1] if zecom_maps else {}
                         
-                        # Index consolidated_live by cleaned SKU for fast lookup
-                        consolidated_live["_clean_sku"] = consolidated_live["sku"].astype(str).str.strip().apply(_clean_sku)
-                        live_dict = consolidated_live.drop_duplicates(subset=["_clean_sku"]).set_index("_clean_sku").to_dict("index")
+                        # Index consolidated_live by cleaned SKU or product_id for fast lookup
+                        is_shopee_or_tiktok = channel and any(p in channel.lower() for p in ["shopee", "tiktok"])
+                        
+                        if is_shopee_or_tiktok and "product_id" in consolidated_live.columns:
+                            consolidated_live["_match_key"] = consolidated_live["product_id"].astype(str).str.strip()
+                        else:
+                            consolidated_live["_match_key"] = consolidated_live["sku"].astype(str).str.strip().apply(_clean_sku)
+                            
+                        live_dict = consolidated_live.drop_duplicates(subset=["_match_key"]).set_index("_match_key").to_dict("index")
                         
                         # Build a new dataframe for Post QC validation
                         post_qc_records = []
@@ -485,6 +491,9 @@ if target_loaded:
                             clean_s = _clean_sku(raw_sku)
                             if not clean_s:
                                 continue
+                                
+                            prod_id_val = str(row.get("product_id", "")).strip()
+                            match_k = prod_id_val if is_shopee_or_tiktok and prod_id_val else clean_s
                             
                             # 1. Fetch Article No from Content File
                             ref_art = sku_to_article.get(clean_s, "")
@@ -493,14 +502,15 @@ if target_loaded:
                             norm_art = _normalise_article_no(ref_art)
                             ref_ld = article_to_launchdate.get(norm_art, "")
                             
-                            # 3. Fetch all other fields from Post QC Live Reports (by matching clean SKU)
-                            live_row = live_dict.get(clean_s, {})
+                            # 3. Fetch all other fields from Post QC Live Reports (by matching clean SKU or product_id)
+                            live_row = live_dict.get(match_k, {})
                             
                             # Standardize gender: from content file gender
                             gender_val = sku_to_gender.get(clean_s, "")
                             
                             post_qc_records.append({
                                 "sku": clean_s,
+                                "product_id": prod_id_val,
                                 "article_number": ref_art,
                                 "launch_date": ref_ld,
                                 "ecommerce_status": live_row.get("ecommerce_status", "Inactive"),
