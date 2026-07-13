@@ -68,8 +68,9 @@ def compare_images_by_url(url1, url2):
     return "Not Matching"
 
 def compare_image_lists(val1, val2):
-    u1_list = [u.strip() for u in str(val1).split(",") if u.strip()]
-    u2_list = [u.strip() for u in str(val2).split(",") if u.strip()]
+    import re
+    u1_list = [u.strip() for u in re.split(r"[,;]", str(val1)) if u.strip()]
+    u2_list = [u.strip() for u in re.split(r"[,;]", str(val2)) if u.strip()]
     
     if not u1_list or not u2_list:
         return "Not Matching"
@@ -1050,6 +1051,7 @@ def compare_source_and_live(
     comparison_records = []
     
     is_shopee_or_tiktok = channel and any(p in channel.lower() for p in ["shopee", "tiktok"])
+    is_shopee = channel and "shopee" in channel.lower()
     
     match_col = match_column
     if is_shopee_or_tiktok:
@@ -1072,14 +1074,19 @@ def compare_source_and_live(
         live_clean[match_col] = live_clean[match_col].astype(str).str.strip().apply(_clean_sku)
         live_clean = live_clean[live_clean[match_col] != ""]
         
-    composite_match = ("size" in src_clean.columns and "size" in live_clean.columns) and (match_col != "product_id")
-    
-    if composite_match:
-        src_clean["_match_key"] = src_clean[match_col] + " | " + src_clean["size"].astype(str).str.strip().apply(correct_size).str.lower()
-        live_clean["_match_key"] = live_clean[match_col] + " | " + live_clean["size"].astype(str).str.strip().apply(correct_size).str.lower()
+    if is_shopee and "product_id" in src_clean.columns and "product_id" in live_clean.columns and "color_name" in src_clean.columns and "color_name" in live_clean.columns:
+        src_clean["_match_key"] = src_clean["product_id"].astype(str).str.strip() + " | " + src_clean["color_name"].astype(str).str.strip().str.lower()
+        live_clean["_match_key"] = live_clean["product_id"].astype(str).str.strip() + " | " + live_clean["color_name"].astype(str).str.strip().str.lower()
         key_col = "_match_key"
+        composite_match = False
     else:
-        key_col = match_col
+        composite_match = ("size" in src_clean.columns and "size" in live_clean.columns) and (match_col != "product_id")
+        if composite_match:
+            src_clean["_match_key"] = src_clean[match_col] + " | " + src_clean["size"].astype(str).str.strip().apply(correct_size).str.lower()
+            live_clean["_match_key"] = live_clean[match_col] + " | " + live_clean["size"].astype(str).str.strip().apply(correct_size).str.lower()
+            key_col = "_match_key"
+        else:
+            key_col = match_col
         
     # Deduplicate match keys to make dict conversion unique
     src_clean = src_clean.drop_duplicates(subset=[key_col])
@@ -1123,7 +1130,9 @@ def compare_source_and_live(
         if composite_match:
             live_val_df["_match_key"] = live_val_df["sku"].astype(str).str.strip().apply(_clean_sku) + " | " + live_val_df["size"].astype(str).str.strip().apply(correct_size).str.lower()
         else:
-            if match_col == "product_id":
+            if is_shopee and "product_id" in live_val_df.columns and "color_name" in live_val_df.columns:
+                live_val_df["_match_key"] = live_val_df["product_id"].astype(str).str.strip() + " | " + live_val_df["color_name"].astype(str).str.strip().str.lower()
+            elif match_col == "product_id":
                 live_val_df["_match_key"] = live_val_df["product_id"].astype(str).str.strip()
             else:
                 live_val_df["_match_key"] = live_val_df["sku"].astype(str).str.strip().apply(_clean_sku)
@@ -1164,7 +1173,19 @@ def compare_source_and_live(
         src_img = src_row.get("images", "") if src_row else ""
         live_img = live_row.get("images", "") if live_row else ""
         if src_img and live_img:
-            img_chk_val = compare_image_lists(src_img, live_img)
+            if is_shopee:
+                src_imgs = [img.strip() for img in re.split(r"[,;]", str(src_img)) if img.strip()]
+                live_imgs = [img.strip() for img in re.split(r"[,;]", str(live_img)) if img.strip()]
+                s_img = src_imgs[0] if src_imgs else ""
+                l_img = live_imgs[0] if live_imgs else ""
+                if s_img and l_img:
+                    img_chk_val = compare_images_by_url(s_img, l_img)
+                elif not s_img and not l_img:
+                    img_chk_val = "Matching"
+                else:
+                    img_chk_val = "Missing"
+            else:
+                img_chk_val = compare_image_lists(src_img, live_img)
         elif not src_img and not live_img:
             img_chk_val = "Matching"
         else:
@@ -1234,7 +1255,19 @@ def compare_source_and_live(
                         except (ValueError, TypeError):
                             is_diff = str(s_val).strip().lower() != str(l_val).strip().lower()
                     elif field == "images":
-                        is_diff = (compare_image_lists(s_val, l_val) == "Not Matching")
+                        if is_shopee:
+                            src_imgs = [img.strip() for img in re.split(r"[,;]", str(s_val)) if img.strip()]
+                            live_imgs = [img.strip() for img in re.split(r"[,;]", str(l_val)) if img.strip()]
+                            s_img = src_imgs[0] if src_imgs else ""
+                            l_img = live_imgs[0] if live_imgs else ""
+                            if s_img and l_img:
+                                is_diff = (compare_images_by_url(s_img, l_img) == "Not Matching")
+                            elif not s_img and not l_img:
+                                is_diff = False
+                            else:
+                                is_diff = True
+                        else:
+                            is_diff = (compare_image_lists(s_val, l_val) == "Not Matching")
                     elif field == "size_chart":
                         is_diff = (compare_images_by_url(s_val, l_val) == "Not Matching")
                     else:
