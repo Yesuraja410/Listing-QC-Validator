@@ -14,13 +14,29 @@ from utils.file_loaders import (
     load_content,
     load_zecom,
     auto_map_columns,
-    standardize_dataframe
+    standardize_dataframe,
+    load_google_sheet
 )
 from utils.validators import validate_dataframe, compare_source_and_live
 from utils.report_generator import (
     generate_qc_excel_report,
     generate_comparison_excel_report
 )
+import io
+
+class FileWrapper:
+    def __init__(self, filepath):
+        self.filepath = filepath
+        self.name = os.path.basename(filepath)
+        with open(filepath, 'rb') as f:
+            self.bytes = f.read()
+        self._io = io.BytesIO(self.bytes)
+        
+    def read(self, *args, **kwargs):
+        return self._io.read(*args, **kwargs)
+        
+    def seek(self, *args, **kwargs):
+        return self._io.seek(*args, **kwargs)
 
 class ListingQCGUI:
     def __init__(self, root):
@@ -214,7 +230,7 @@ class ListingQCGUI:
             
             # 1. Load Reference Files
             self.log("Loading Content database...")
-            df_content = load_file_to_df(content_file, channel=chan)
+            df_content = load_file_to_df(FileWrapper(content_file), channel=chan)
             
             self.log("Loading zeCOM database...")
             # extract country from channel
@@ -223,11 +239,14 @@ class ListingQCGUI:
                 country = "MY"
             elif "PH" in chan:
                 country = "PH"
-            df_zecom = load_zecom(zecom_file, country=country)
+            df_zecom = load_zecom(FileWrapper(zecom_file), country=country)
             
             if stage == "Internal QC":
                 self.log("Loading Master file...")
-                df_master = load_excel_all_sheets(master_file, channel=chan)
+                if "docs.google.com/spreadsheets" in master_file:
+                    df_master = {"Google Sheet": load_google_sheet(master_file, channel=chan)}
+                else:
+                    df_master = load_excel_all_sheets(FileWrapper(master_file), channel=chan)
                 
                 # Standardize and combine all sheets from the master file
                 all_standardized = []
@@ -259,7 +278,13 @@ class ListingQCGUI:
                     
                 # Save report
                 output_name = f"Listing_QC_Report_Internal_QC_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-                output_path = os.path.join(os.path.dirname(master_file), output_name)
+                if "docs.google.com/spreadsheets" in master_file:
+                    save_dir = os.path.join(os.path.expanduser("~"), "Downloads")
+                    if not os.path.exists(save_dir):
+                        save_dir = os.getcwd()
+                else:
+                    save_dir = os.path.dirname(master_file)
+                output_path = os.path.join(save_dir, output_name)
                 
                 self.log(f"Saving Excel report to: {output_path}")
                 generate_qc_excel_report(exc_df, val_df, output_path, qc_stage="Internal QC")
@@ -273,7 +298,10 @@ class ListingQCGUI:
                     return
                     
                 self.log("Loading Target upload template...")
-                df_source = load_excel_all_sheets(master_file, channel=chan)
+                if "docs.google.com/spreadsheets" in master_file:
+                    df_source = {"Google Sheet": load_google_sheet(master_file, channel=chan)}
+                else:
+                    df_source = load_excel_all_sheets(FileWrapper(master_file), channel=chan)
                 
                 # Standardize and combine all sheets from the target upload template
                 all_standardized = []
@@ -291,7 +319,7 @@ class ListingQCGUI:
                 combined_source = pd.concat(all_standardized, ignore_index=True)
                 
                 self.log("Loading Live marketplace report...")
-                df_live = process_live_files([live_file], channel=chan)
+                df_live = process_live_files([FileWrapper(live_file)], channel=chan)
                 
                 # Extract SKU maps and build reference maps for Post QC (matching app.py logic)
                 from utils.validators import build_content_maps, build_zecom_maps, _clean_sku
@@ -304,9 +332,13 @@ class ListingQCGUI:
                 sku_to_gender = content_maps[4] if content_maps else {}
                 article_to_launchdate = zecom_maps[0] if zecom_maps else {}
                 
-                # Fetch live listings dict
-                df_live["_clean_sku"] = df_live["sku"].astype(str).str.strip().apply(_clean_sku)
-                live_dict = df_live.drop_duplicates(subset=["_clean_sku"]).set_index("_clean_sku").to_dict("index")
+                # Fetch live listings dict or product_id for fast lookup
+                is_shopee_or_tiktok = chan and any(p in chan.lower() for p in ["shopee", "tiktok"])
+                if is_shopee_or_tiktok and "product_id" in df_live.columns:
+                    df_live["_match_key"] = df_live["product_id"].astype(str).str.strip()
+                else:
+                    df_live["_match_key"] = df_live["sku"].astype(str).str.strip().apply(_clean_sku)
+                live_dict = df_live.drop_duplicates(subset=["_match_key"]).set_index("_match_key").to_dict("index")
                 
                 post_qc_records = []
                 for idx, row in combined_source.iterrows():
@@ -315,14 +347,18 @@ class ListingQCGUI:
                     if not clean_s:
                         continue
                     
+                    prod_id_val = str(row.get("product_id", "")).strip()
+                    match_k = prod_id_val if is_shopee_or_tiktok and prod_id_val else clean_s
+                    
                     ref_art = sku_to_article.get(clean_s, "")
                     norm_art = _normalise_article_no(ref_art)
                     ref_ld = article_to_launchdate.get(norm_art, "")
-                    live_row = live_dict.get(clean_s, {})
+                    live_row = live_dict.get(match_k, {})
                     gender_val = sku_to_gender.get(clean_s, "")
                     
                     post_qc_records.append({
                         "sku": clean_s,
+                        "product_id": prod_id_val,
                         "article_number": ref_art,
                         "launch_date": ref_ld,
                         "ecommerce_status": live_row.get("ecommerce_status", "Inactive"),
@@ -360,7 +396,13 @@ class ListingQCGUI:
                 
                 # Save report
                 output_name = f"Listing_QC_Report_Post_QC_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-                output_path = os.path.join(os.path.dirname(master_file), output_name)
+                if "docs.google.com/spreadsheets" in master_file:
+                    save_dir = os.path.join(os.path.expanduser("~"), "Downloads")
+                    if not os.path.exists(save_dir):
+                        save_dir = os.getcwd()
+                else:
+                    save_dir = os.path.dirname(master_file)
+                output_path = os.path.join(save_dir, output_name)
                 
                 self.log(f"Saving Comparison Excel report to: {output_path}")
                 generate_comparison_excel_report(comp_df, summary, output_path)
