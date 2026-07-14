@@ -72,6 +72,8 @@ class TestValidators(unittest.TestCase):
             "size": "42",  # Matches UK size 42 in Content File
             "quantity": 0,   # Must be exactly 0
             "price": 89.99,  # Matches RRP Price 89.99 in zEcom File
+            "images": "http://example.com/img.jpg",
+            "size_chart": "http://example.com/sc.jpg",
             "_original_row_number": 2,
             "_source_file": "test_upload.csv"
         })
@@ -146,6 +148,8 @@ class TestValidators(unittest.TestCase):
             "size": "44",  # Matches Russian size 44
             "quantity": 0,
             "price": 49.99,
+            "images": "http://example.com/img.jpg",
+            "size_chart": "http://example.com/sc.jpg",
             "_original_row_number": 3,
             "_source_file": "test_upload.csv"
         })
