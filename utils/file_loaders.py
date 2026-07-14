@@ -1242,7 +1242,9 @@ def parse_live_lazada(df: pd.DataFrame) -> pd.DataFrame:
         
     name_col = next((c for c in df_data.columns if c.lower() in ["name", "product name", "product_name"]), None)
     qty_col = next((c for c in df_data.columns if c.lower() in ["quantity", "stock", "qty", "mp stock"]), None)
-    price_col = next((c for c in df_data.columns if c.lower() in ["price", "selling price", "mp price"]), None)
+    price_col = next((c for c in df_data.columns if c.lower() == "price"), None)
+    if not price_col:
+        price_col = next((c for c in df_data.columns if c.lower() in ["price", "selling price", "mp price"]), None)
     
     var_col = next((c for c in df_data.columns if c.lower() in ["variation", "variations", "variation combo", "variation_combo", "variations combo", "variations_combo"]), None)
     color_col = next((c for c in df_data.columns if c.lower() in ["color", "colour", "color name", "color_name"]), None)
@@ -1304,7 +1306,9 @@ def parse_live_shopee(df: pd.DataFrame) -> pd.DataFrame:
     parent_col = next((c for c in df_data.columns if c.lower() in ["parent sku", "parentsku", "parent_sku"]), None)
     prod_col = next((c for c in df_data.columns if c.lower().replace(" ", "").replace("_", "") in ["productid", "itemid"]), None)
     name_col = next((c for c in df_data.columns if c.lower() in ["product name", "name", "product_name"]), None)
-    price_col = next((c for c in df_data.columns if c.lower() in ["price", "selling price", "mp price"]), None)
+    price_col = next((c for c in df_data.columns if c.lower() == "price"), None)
+    if not price_col:
+        price_col = next((c for c in df_data.columns if c.lower() in ["price", "selling price", "mp price"]), None)
     stock_col = next((c for c in df_data.columns if c.lower() in ["stock", "quantity", "qty", "mp stock"]), None)
     
     var_col = next((c for c in df_data.columns if c.lower() in ["variation name", "variation", "variation_name"]), None)
@@ -1369,7 +1373,9 @@ def parse_live_tiktok(df: pd.DataFrame) -> pd.DataFrame:
         
     prod_col = next((c for c in df_data.columns if c.lower().replace(" ", "").replace("_", "") in ["productid", "itemid", "spuid"]), None)
     name_col = next((c for c in df_data.columns if c.lower() in ["product name", "name", "product_name"]), None)
-    price_col = next((c for c in df_data.columns if "retail price" in c.lower() or c.lower() == "price"), None)
+    price_col = next((c for c in df_data.columns if c.lower() == "price"), None)
+    if not price_col:
+        price_col = next((c for c in df_data.columns if "retail price" in c.lower() or c.lower() == "price"), None)
     qty_col = next((c for c in df_data.columns if c.lower() in ["quantity", "stock", "qty"]), None)
     
     var_col = next((c for c in df_data.columns if c.lower() in ["variation option", "variation", "variation_option"]), None)
