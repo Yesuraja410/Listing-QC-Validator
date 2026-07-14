@@ -654,6 +654,20 @@ if target_loaded:
                 qty_text = "Quantity is 0 for all items" if qty_ok else f"{qty_rows} non-zero quantity items found"
                 qty_target_cond = "Quantity must be exactly 0 for all items"
             
+            # 8. Images Check
+            img_excs = exc_df[exc_df["Field"] == "Images"] if not exc_df.empty else pd.DataFrame()
+            img_ok = img_excs.empty
+            img_badge = '<span class="qc-status-ok">OK</span>' if img_ok else '<span class="qc-status-mismatch">Mismatch</span>'
+            img_rows = img_excs.groupby(["Source File", "Row Number"]).ngroups if not img_ok else 0
+            img_text = "All image URLs exist and are valid format" if img_ok else f"{img_rows} image errors found"
+            
+            # 9. Size Chart Check
+            sc_excs = exc_df[exc_df["Field"] == "Size Chart"] if not exc_df.empty else pd.DataFrame()
+            sc_ok = sc_excs.empty
+            sc_badge = '<span class="qc-status-ok">OK</span>' if sc_ok else '<span class="qc-status-mismatch">Mismatch</span>'
+            sc_rows = sc_excs.groupby(["Source File", "Row Number"]).ngroups if not sc_ok else 0
+            sc_text = "All size charts exist and match gender reference" if sc_ok else f"{sc_rows} size chart anomalies found"
+            
             # Build QC Table HTML
             qc_table_html = f"""
             <table class="qc-table">
@@ -708,6 +722,18 @@ if target_loaded:
                         <td>{qty_text}</td>
                         <td style="text-align: center;">{qty_badge}</td>
                     </tr>
+                    <tr>
+                        <td style="font-weight: 600;">Images Check</td>
+                        <td>Image URLs exist and are valid format</td>
+                        <td>{img_text}</td>
+                        <td style="text-align: center;">{img_badge}</td>
+                    </tr>
+                    <tr>
+                        <td style="font-weight: 600;">Size Chart Check</td>
+                        <td>Size chart exists and matches gender classification</td>
+                        <td>{sc_text}</td>
+                        <td style="text-align: center;">{sc_badge}</td>
+                    </tr>
                 </tbody>
             </table>
             """
@@ -734,7 +760,9 @@ if target_loaded:
                 "price": "RRP",
                 "ref_rrp": "Reference RRP",
                 "RRP Check": "RRP Check",
-                "quantity": "Quantity"
+                "quantity": "Quantity",
+                "Images Check": "Images Check",
+                "Size Chart Check": "Size Chart Check"
             }
             for col in target_headers.keys():
                 if col not in preview_df.columns:
