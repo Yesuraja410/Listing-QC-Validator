@@ -37,7 +37,9 @@ def generate_qc_excel_report(val_df: pd.DataFrame, exc_df: pd.DataFrame, qc_stag
         "price": "RRP",
         "ref_rrp": "Reference RRP",
         "RRP Check": "RRP Check",
-        "quantity": "Quantity"
+        "quantity": "Quantity",
+        "Images Check": "Images Check",
+        "Size Chart Check": "Size Chart Check"
     }
     
     for col in target_headers.keys():
