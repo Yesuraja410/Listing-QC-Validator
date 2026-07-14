@@ -391,7 +391,8 @@ def validate_row_internal(
     content_maps: Tuple = (None, None, None, None, None, None, None, None),
     zecom_maps: Tuple = (None, None, None),
     allowed_genders: List[str] = ALLOWED_GENDERS, 
-    allowed_statuses: List[str] = ALLOWED_STATUSES
+    allowed_statuses: List[str] = ALLOWED_STATUSES,
+    check_live_images: bool = False
 ) -> List[Dict]:
     """
     Validates a single row for Internal QC with reference lookups, US/Rus size checks, and RRP price checks.
@@ -709,6 +710,42 @@ def validate_row_internal(
                     if valid_sizes and clean_size_for_comparison(size) not in [clean_size_for_comparison(vs) for vs in valid_sizes]:
                         add_exc("Size", raw_size, "Error", f"Size mismatch: Size '{raw_size}' (Normalized: '{size}') is not in the list of valid {size_type}s ({', '.join(sorted(list(valid_sizes)))}) in Content File for Article No '{art_num}'.")
 
+    # 11. Images & Size Chart Check (always run on both Internal and Post QC)
+    if not is_parent_sku:
+        images_raw = row.get("images")
+        if is_empty(images_raw):
+            add_exc("Images", images_raw, "Error", "Images column is missing or empty.")
+        else:
+            img_urls = [url.strip() for url in re.split(r'[,;\n]+', str(images_raw)) if url.strip()]
+            if not img_urls:
+                add_exc("Images", images_raw, "Error", "No valid image links found.")
+            else:
+                for i, url in enumerate(img_urls):
+                    if not URL_REGEX.match(url):
+                        add_exc("Images", url, "Error", f"Image #{i+1} is not a valid URL format.")
+                    elif check_live_images:
+                        ok, err_msg = check_live_image_url(url)
+                        if not ok:
+                            add_exc("Images", url, "Error", f"Image #{i+1} link is {err_msg}.")
+
+        size_chart_raw = row.get("size_chart")
+        if is_empty(size_chart_raw):
+            add_exc("Size Chart", size_chart_raw, "Error", "Size Chart attachment is missing.")
+        else:
+            size_chart = str(size_chart_raw).strip()
+            if "http" in size_chart.lower() and not URL_REGEX.match(size_chart):
+                add_exc("Size Chart", size_chart, "Warning", "Size Chart link is invalid URL format.")
+            
+            if not is_empty(gender):
+                sc_low = size_chart.lower()
+                g_low = gender.lower()
+                if g_low in ["men", "boys"] and any(w in sc_low for w in ["women", "womens", "girl", "girls", "lady"]):
+                    add_exc("Size Chart", size_chart, "Warning", f"Size Chart reference seems to belong to females ('{size_chart}') but product gender is '{gender}'.")
+                elif g_low in ["women", "girls"]:
+                    has_men_only = re.search(r"\bmen\b|\bmens\b|\bboy\b|\bboys\b", sc_low)
+                    if has_men_only:
+                        add_exc("Size Chart", size_chart, "Warning", f"Size Chart reference seems to belong to males ('{size_chart}') but product gender is '{gender}'.")
+
     return exceptions
 
 
@@ -746,71 +783,7 @@ def validate_row_post(
     Validates a single row for Post QC.
     Inherits Internal QC checks, then checks Images and Size Chart columns.
     """
-    exceptions = validate_row_internal(row, idx, channel, content_maps, zecom_maps, allowed_genders, allowed_statuses)
-    
-    sku_val = row.get("_cleaned_sku") if "_cleaned_sku" in row else _clean_sku(row.get("sku", ""))
-    is_parent_sku = False
-    if not is_empty(row.get("sku")):
-        is_parent_sku = not bool(re.fullmatch(r'\d{13}', sku_val))
-        
-    if is_parent_sku:
-        return exceptions
-        
-    source_file = row.get("_source_file", "Unknown File")
-    row_num = row.get("_original_row_number", idx + 2)
-    art_num = clean_str(row.get("article_number", ""))
-    prod_name = clean_str(row.get("product_name", ""))
-    gender = clean_str(row.get("gender", ""))
-
-    def add_exc(field: str, val, severity: str, msg: str):
-        exceptions.append({
-            "Source File": source_file,
-            "Row Number": row_num,
-            "Article Number": art_num if art_num else "MISSING",
-            "Product Name": prod_name if prod_name else "MISSING",
-            "Field": field,
-            "Value": str(val) if not pd.isna(val) else "MISSING",
-            "Severity": severity,
-            "Message": msg
-        })
-
-    # 1. Images
-    images_raw = row.get("images")
-    if is_empty(images_raw):
-        add_exc("Images", images_raw, "Error", "Images column is missing or empty.")
-    else:
-        img_urls = [url.strip() for url in re.split(r'[,;\n]+', str(images_raw)) if url.strip()]
-        if not img_urls:
-            add_exc("Images", images_raw, "Error", "No valid image links found.")
-        else:
-            for i, url in enumerate(img_urls):
-                if not URL_REGEX.match(url):
-                    add_exc("Images", url, "Error", f"Image #{i+1} is not a valid URL format.")
-                elif check_live_images:
-                    ok, err_msg = check_live_image_url(url)
-                    if not ok:
-                        add_exc("Images", url, "Error", f"Image #{i+1} link is {err_msg}.")
-
-    # 2. Size Chart
-    size_chart_raw = row.get("size_chart")
-    if is_empty(size_chart_raw):
-        add_exc("Size Chart", size_chart_raw, "Error", "Size Chart attachment is missing.")
-    else:
-        size_chart = str(size_chart_raw).strip()
-        if "http" in size_chart.lower() and not URL_REGEX.match(size_chart):
-            add_exc("Size Chart", size_chart, "Warning", "Size Chart link is invalid URL format.")
-        
-        if not is_empty(gender):
-            sc_low = size_chart.lower()
-            g_low = gender.lower()
-            if g_low in ["men", "boys"] and any(w in sc_low for w in ["women", "womens", "girl", "girls", "lady"]):
-                add_exc("Size Chart", size_chart, "Warning", f"Size Chart reference seems to belong to females ('{size_chart}') but product gender is '{gender}'.")
-            elif g_low in ["women", "girls"]:
-                has_men_only = re.search(r"\bmen\b|\bmens\b|\bboy\b|\bboys\b", sc_low)
-                if has_men_only:
-                    add_exc("Size Chart", size_chart, "Warning", f"Size Chart reference seems to belong to males ('{size_chart}') but product gender is '{gender}'.")
-
-    return exceptions
+    return validate_row_internal(row, idx, channel, content_maps, zecom_maps, allowed_genders, allowed_statuses, check_live_images)
 
 
 def validate_dataframe(
@@ -855,6 +828,8 @@ def validate_dataframe(
     color_check_col = []
     size_check_col = []
     rrp_check_col = []
+    images_check_col = []
+    size_chart_check_col = []
     ref_color_name_col = []
     ref_size_col = []
     ref_rrp_col = []
@@ -961,6 +936,8 @@ def validate_dataframe(
         color_msgs = []
         size_msgs = []
         rrp_msgs = []
+        images_msgs = []
+        size_chart_msgs = []
         
         for exc in row_exceptions:
             field = exc.get("Field", "")
@@ -976,11 +953,17 @@ def validate_dataframe(
                 size_msgs.append(msg)
             elif field == "Price":
                 rrp_msgs.append(msg)
+            elif field == "Images":
+                images_msgs.append(msg)
+            elif field == "Size Chart":
+                size_chart_msgs.append(msg)
                 
         gender_check_col.append("; ".join(gender_msgs) if gender_msgs else "OK")
         color_check_col.append("; ".join(color_msgs) if color_msgs else "OK")
         size_check_col.append("; ".join(size_msgs) if size_msgs else "OK")
         rrp_check_col.append("; ".join(rrp_msgs) if rrp_msgs else "OK")
+        images_check_col.append("; ".join(images_msgs) if images_msgs else "OK")
+        size_chart_check_col.append("; ".join(size_chart_msgs) if size_chart_msgs else "OK")
         
         # Determine Reference values for display
         ref_color_val = ""
@@ -1042,6 +1025,8 @@ def validate_dataframe(
     val_df["Size Check"] = size_check_col
     val_df["ref_rrp"] = ref_rrp_col
     val_df["RRP Check"] = rrp_check_col
+    val_df["Images Check"] = images_check_col
+    val_df["Size Chart Check"] = size_chart_check_col
     
     if all_exceptions:
         exc_df = pd.DataFrame(all_exceptions)
