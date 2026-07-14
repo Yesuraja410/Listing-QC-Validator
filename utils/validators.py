@@ -7,8 +7,11 @@ from typing import Dict, List, Tuple
 import urllib.request
 import io
 from PIL import Image
+import threading
+import concurrent.futures
 
 _IMAGE_HASH_CACHE = {}
+_CACHE_LOCK = threading.Lock()
 
 def _normalize_img_url(url):
     u = str(url).strip()
@@ -21,8 +24,9 @@ def download_and_hash_image(url):
     if not url:
         return None, "Empty URL"
         
-    if url in _IMAGE_HASH_CACHE:
-        return _IMAGE_HASH_CACHE[url]
+    with _CACHE_LOCK:
+        if url in _IMAGE_HASH_CACHE:
+            return _IMAGE_HASH_CACHE[url]
         
     try:
         req = urllib.request.Request(
@@ -41,8 +45,21 @@ def download_and_hash_image(url):
     except Exception as e:
         res = (None, str(e))
         
-    _IMAGE_HASH_CACHE[url] = res
+    with _CACHE_LOCK:
+        _IMAGE_HASH_CACHE[url] = res
     return res
+
+def pre_hash_image_urls(urls: List[str], max_workers: int = 30):
+    unique_urls = list(set(str(u).strip() for u in urls if str(u).strip()))
+    
+    with _CACHE_LOCK:
+        urls_to_download = [u for u in unique_urls if u not in _IMAGE_HASH_CACHE]
+        
+    if not urls_to_download:
+        return
+        
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        executor.map(download_and_hash_image, urls_to_download)
 
 def compare_images_by_url(url1, url2):
     u1 = str(url1).strip()
@@ -1137,6 +1154,23 @@ def compare_source_and_live(
             else:
                 live_val_df["_match_key"] = live_val_df["sku"].astype(str).str.strip().apply(_clean_sku)
         live_val_dict = live_val_df.drop_duplicates(subset=["_match_key"]).set_index("_match_key").to_dict('index')
+        
+    # Pre-hash all unique image and size chart URLs concurrently to maximize speed
+    urls_to_hash = []
+    for r in src_dict.values():
+        if "images" in r and r["images"]:
+            urls_to_hash.extend([u.strip() for u in re.split(r"[,;]", str(r["images"])) if u.strip()])
+        if "size_chart" in r and r["size_chart"]:
+            urls_to_hash.append(str(r["size_chart"]).strip())
+            
+    for r in live_dict.values():
+        if "images" in r and r["images"]:
+            urls_to_hash.extend([u.strip() for u in re.split(r"[,;]", str(r["images"])) if u.strip()])
+        if "size_chart" in r and r["size_chart"]:
+            urls_to_hash.append(str(r["size_chart"]).strip())
+            
+    if urls_to_hash:
+        pre_hash_image_urls(urls_to_hash)
         
     all_keys = set(src_dict.keys()).union(set(live_dict.keys()))
     
