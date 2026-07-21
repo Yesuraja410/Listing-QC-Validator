@@ -578,5 +578,21 @@ class TestValidators(unittest.TestCase):
         self.assertFalse(ok_white)
         self.assertIn("Color & Image mismatch", msg_white)
 
+    def test_size_chart_exemption_for_bags_balls_gloves(self):
+        from listing_qc_validator.utils.validators import is_size_chart_exempt, validate_row_internal
+
+        self.assertTrue(is_size_chart_exempt("PUMA Fundamentals Sports Backpack"))
+        self.assertTrue(is_size_chart_exempt("PUMA Orbita Football Size 5"))
+        self.assertTrue(is_size_chart_exempt("Ultra Grip Goalkeeper Gloves"))
+        self.assertFalse(is_size_chart_exempt("PUMA T-Shirt Cotton"))
+
+        # Row with Bag product name and missing size chart should NOT raise size chart exception
+        row = self.valid_upload_row.copy()
+        row["product_name"] = "PUMA Unisex Phase Backpack"
+        row["size_chart"] = "" # Missing
+        excs = validate_row_internal(row, 0, channel="Lazada MY", content_maps=self.content_maps, zecom_maps=self.zecom_maps_shopee)
+        sc_excs = [e for e in excs if e["Field"] == "Size Chart"]
+        self.assertEqual(len(sc_excs), 0, "Bags should be exempt from missing size chart error")
+
 if __name__ == '__main__':
     unittest.main()
