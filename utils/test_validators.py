@@ -548,5 +548,35 @@ class TestValidators(unittest.TestCase):
         self.assertEqual(parsed.iloc[1]["sku"], "SKU_Z2")
         self.assertEqual(parsed.iloc[0]["images"], "http://img1.jpg")
 
+    def test_color_name_image_verification(self):
+        from listing_qc_validator.utils.validators import extract_expected_colors, verify_color_name_against_image
+        from PIL import Image
+        import io
+
+        self.assertEqual(extract_expected_colors("PUMA Black"), ["black"])
+        self.assertEqual(extract_expected_colors("Alpine Snow-For All Time Red"), ["white", "red"])
+
+        # Create a synthetic black image
+        img = Image.new('RGB', (64, 64), (255, 255, 255))
+        for x in range(10, 54):
+            for y in range(10, 54):
+                img.putpixel((x, y), (10, 10, 10))
+
+        raw_bytes = io.BytesIO()
+        img.save(raw_bytes, format='PNG')
+        raw_b = raw_bytes.getvalue()
+
+        from listing_qc_validator.utils.validators import _IMAGE_COLOR_CACHE, analyze_image_dominant_colors
+        shares = analyze_image_dominant_colors(raw_b)
+        self.assertIn("black", shares)
+
+        _IMAGE_COLOR_CACHE["http://test.com/black.png"] = shares
+        ok_black, _ = verify_color_name_against_image("PUMA Black", "http://test.com/black.png")
+        self.assertTrue(ok_black)
+
+        ok_white, msg_white = verify_color_name_against_image("PUMA White", "http://test.com/black.png")
+        self.assertFalse(ok_white)
+        self.assertIn("Color & Image mismatch", msg_white)
+
 if __name__ == '__main__':
     unittest.main()
