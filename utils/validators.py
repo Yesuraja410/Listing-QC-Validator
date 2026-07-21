@@ -100,7 +100,7 @@ def analyze_image_dominant_colors(raw_bytes: bytes) -> dict:
     except Exception:
         return {}
 
-def verify_color_name_against_image(color_name: str, url: str) -> Tuple[bool, str]:
+def verify_color_name_against_image(color_name: str, url: str, allow_download: bool = False) -> Tuple[bool, str]:
     if not color_name or not url:
         return True, ""
     expected_colors = extract_expected_colors(color_name)
@@ -114,7 +114,8 @@ def verify_color_name_against_image(color_name: str, url: str) -> Tuple[bool, st
             detected_shares = _IMAGE_COLOR_CACHE[url_str]
 
     if not detected_shares:
-        # Trigger download & analysis if not in cache
+        if not allow_download:
+            return True, ""
         download_and_hash_image(url_str)
         with _CACHE_LOCK:
             detected_shares = _IMAGE_COLOR_CACHE.get(url_str, {})
@@ -133,6 +134,19 @@ def verify_color_name_against_image(color_name: str, url: str) -> Tuple[bool, st
     else:
         exp_str = ", ".join([c.title() for c in expected_colors])
         return False, f"Color & Image mismatch: Color Name stated as '{color_name}' expects [{exp_str}], but image dominant colors are detected as [{top_str}]."
+
+EXEMPT_SIZE_CHART_KEYWORDS = [
+    r"\bbag\b", r"\bbags\b", r"\bbackpack\b", r"\bbackpacks\b", r"\bduffel\b", r"\bduffle\b", 
+    r"\btote\b", r"\bpouch\b", r"\bwaistbag\b", r"\bgymsack\b", r"\bcrossbody\b", r"\bholdall\b",
+    r"\bball\b", r"\bballs\b", r"\bfootball\b", r"\bsoccerball\b", r"\bbasketball\b",
+    r"\bglove\b", r"\bgloves\b", r"\bgoalkeeper\b"
+]
+
+def is_size_chart_exempt(product_name: str) -> bool:
+    if not product_name:
+        return False
+    pn_low = str(product_name).lower()
+    return any(re.search(pat, pn_low) for pat in EXEMPT_SIZE_CHART_KEYWORDS)
 
 def _normalize_img_url(url):
     u = str(url).strip()
@@ -857,12 +871,15 @@ def validate_row_internal(
                 if color_name_val and img_urls:
                     first_img_url = img_urls[0]
                     if URL_REGEX.match(first_img_url):
-                        ok_color, color_err_msg = verify_color_name_against_image(color_name_val, first_img_url)
+                        ok_color, color_err_msg = verify_color_name_against_image(color_name_val, first_img_url, allow_download=check_live_images)
                         if not ok_color:
                             add_exc("Color Name", color_name_val, "Warning", color_err_msg)
 
         size_chart_raw = row.get("size_chart")
-        if is_empty(size_chart_raw):
+        if is_size_chart_exempt(prod_name):
+            # Exempt item (Bag, Ball, Gloves) - Size chart is not required
+            pass
+        elif is_empty(size_chart_raw):
             add_exc("Size Chart", size_chart_raw, "Error", "Size Chart attachment is missing.")
         else:
             size_chart = str(size_chart_raw).strip()
@@ -1231,6 +1248,23 @@ def compare_source_and_live(
     src_dict = src_clean.set_index(key_col).to_dict('index')
     live_dict = live_clean.set_index(key_col).to_dict('index')
     
+    # Pre-hash all unique image and size chart URLs concurrently to maximize speed
+    urls_to_hash = []
+    for r in src_dict.values():
+        if "images" in r and r["images"]:
+            urls_to_hash.extend([u.strip() for u in re.split(r"[,;]", str(r["images"])) if u.strip()])
+        if "size_chart" in r and r["size_chart"]:
+            urls_to_hash.append(str(r["size_chart"]).strip())
+            
+    for r in live_dict.values():
+        if "images" in r and r["images"]:
+            urls_to_hash.extend([u.strip() for u in re.split(r"[,;]", str(r["images"])) if u.strip()])
+        if "size_chart" in r and r["size_chart"]:
+            urls_to_hash.append(str(r["size_chart"]).strip())
+            
+    if urls_to_hash:
+        pre_hash_image_urls(urls_to_hash)
+        
     # Run 9 checks on live listings first
     live_val_dict = {}
     if content_df is not None and zecom_df is not None and channel is not None:
@@ -1272,23 +1306,6 @@ def compare_source_and_live(
             else:
                 live_val_df["_match_key"] = live_val_df["sku"].astype(str).str.strip().apply(_clean_sku)
         live_val_dict = live_val_df.drop_duplicates(subset=["_match_key"]).set_index("_match_key").to_dict('index')
-        
-    # Pre-hash all unique image and size chart URLs concurrently to maximize speed
-    urls_to_hash = []
-    for r in src_dict.values():
-        if "images" in r and r["images"]:
-            urls_to_hash.extend([u.strip() for u in re.split(r"[,;]", str(r["images"])) if u.strip()])
-        if "size_chart" in r and r["size_chart"]:
-            urls_to_hash.append(str(r["size_chart"]).strip())
-            
-    for r in live_dict.values():
-        if "images" in r and r["images"]:
-            urls_to_hash.extend([u.strip() for u in re.split(r"[,;]", str(r["images"])) if u.strip()])
-        if "size_chart" in r and r["size_chart"]:
-            urls_to_hash.append(str(r["size_chart"]).strip())
-            
-    if urls_to_hash:
-        pre_hash_image_urls(urls_to_hash)
         
     all_keys = set(src_dict.keys()).union(set(live_dict.keys()))
     
@@ -1430,7 +1447,10 @@ def compare_source_and_live(
                         else:
                             is_diff = (compare_image_lists(s_val, l_val) == "Not Matching")
                     elif field == "size_chart":
-                        is_diff = (compare_images_by_url(s_val, l_val) == "Not Matching")
+                        if is_size_chart_exempt(prod_name):
+                            is_diff = False
+                        else:
+                            is_diff = (compare_images_by_url(s_val, l_val) == "Not Matching")
                     else:
                         is_diff = clean_str(s_val).lower() != clean_str(l_val).lower()
                         
