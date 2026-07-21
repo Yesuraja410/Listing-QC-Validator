@@ -7,11 +7,132 @@ from typing import Dict, List, Tuple
 import urllib.request
 import io
 from PIL import Image
+import colorsys
 import threading
 import concurrent.futures
 
 _IMAGE_HASH_CACHE = {}
+_IMAGE_COLOR_CACHE = {}
 _CACHE_LOCK = threading.Lock()
+
+COLOR_KEYWORDS = {
+    "black": ["black", "blk", "dark", "noir", "schwarz"],
+    "white": ["white", "wht", "snow", "blanc", "weiss", "ivory", "off-white", "off white"],
+    "red": ["red", "scarlet", "crimson", "burgundy", "maroon", "ruby", "rouge"],
+    "blue": ["blue", "navy", "royal", "cyan", "azure", "indigo", "bleu"],
+    "green": ["green", "olive", "lime", "emerald", "vert"],
+    "yellow": ["yellow", "gold", "golden", "jaune"],
+    "pink": ["pink", "magenta", "rose", "fuchsia"],
+    "grey": ["grey", "gray", "silver", "charcoal", "slate", "gris"],
+    "orange": ["orange", "coral", "peach"],
+    "purple": ["purple", "violet", "plum", "lilac"],
+    "brown": ["brown", "tan", "chocolate", "bronze"],
+    "beige": ["beige", "cream", "khaki", "nude"]
+}
+
+def extract_expected_colors(color_name: str) -> list:
+    if not color_name:
+        return []
+    cn_low = str(color_name).lower()
+    found_colors = []
+    for std_color, syns in COLOR_KEYWORDS.items():
+        for syn in syns:
+            if re.search(r'\b' + re.escape(syn) + r'\b', cn_low):
+                if std_color not in found_colors:
+                    found_colors.append(std_color)
+                break
+    return found_colors
+
+def analyze_image_dominant_colors(raw_bytes: bytes) -> dict:
+    try:
+        img = Image.open(io.BytesIO(raw_bytes)).convert('RGB')
+        img = img.resize((64, 64), Image.Resampling.LANCZOS)
+        arr = np.array(img, dtype=float) / 255.0  # Shape (64, 64, 3)
+
+        pixels = arr.reshape(-1, 3)
+        # Exclude near-white background pixels (R>0.92, G>0.92, B>0.92)
+        bg_mask = (pixels[:, 0] > 0.92) & (pixels[:, 1] > 0.92) & (pixels[:, 2] > 0.92)
+        prod_pixels = pixels[~bg_mask]
+
+        if len(prod_pixels) < 50:
+            bg_mask = (pixels[:, 0] > 0.97) & (pixels[:, 1] > 0.97) & (pixels[:, 2] > 0.97)
+            prod_pixels = pixels[~bg_mask]
+
+        if len(prod_pixels) == 0:
+            return {"white": 1.0}
+
+        counts = {c: 0 for c in COLOR_KEYWORDS.keys()}
+        total_p = len(prod_pixels)
+
+        for r, g, b in prod_pixels:
+            h, s, v = colorsys.rgb_to_hsv(r, g, b)
+            h_deg = h * 360.0
+
+            if v < 0.28:
+                counts["black"] += 1
+            elif s < 0.12 and v > 0.85:
+                counts["white"] += 1
+            elif s < 0.15:
+                counts["grey"] += 1
+            elif h_deg < 15 or h_deg >= 345:
+                if s > 0.2 and v > 0.2:
+                    counts["red"] += 1
+                else:
+                    counts["grey"] += 1
+            elif 15 <= h_deg < 45:
+                if v < 0.5 and s > 0.2:
+                    counts["brown"] += 1
+                else:
+                    counts["orange"] += 1
+            elif 45 <= h_deg < 70:
+                counts["yellow"] += 1
+            elif 70 <= h_deg < 165:
+                counts["green"] += 1
+            elif 165 <= h_deg < 260:
+                counts["blue"] += 1
+            elif 260 <= h_deg < 315:
+                counts["purple"] += 1
+            elif 315 <= h_deg < 345:
+                counts["pink"] += 1
+
+        color_shares = {c: count / total_p for c, count in counts.items() if count > 0}
+        return dict(sorted(color_shares.items(), key=lambda item: item[1], reverse=True))
+    except Exception:
+        return {}
+
+def verify_color_name_against_image(color_name: str, url: str) -> Tuple[bool, str]:
+    if not color_name or not url:
+        return True, ""
+    expected_colors = extract_expected_colors(color_name)
+    if not expected_colors:
+        return True, ""
+
+    url_str = str(url).strip()
+    detected_shares = {}
+    with _CACHE_LOCK:
+        if url_str in _IMAGE_COLOR_CACHE:
+            detected_shares = _IMAGE_COLOR_CACHE[url_str]
+
+    if not detected_shares:
+        # Trigger download & analysis if not in cache
+        download_and_hash_image(url_str)
+        with _CACHE_LOCK:
+            detected_shares = _IMAGE_COLOR_CACHE.get(url_str, {})
+
+    if not detected_shares:
+        return True, ""
+
+    top_colors = list(detected_shares.keys())[:3]
+    top_str = ", ".join([f"{c.title()} ({detected_shares[c]*100:.1f}%)" for c in top_colors])
+
+    # Check if any expected color is present with significant presence (> 5% share)
+    matched = any(c in detected_shares and detected_shares[c] >= 0.05 for c in expected_colors)
+
+    if matched:
+        return True, f"Color match confirmed (Expected: {', '.join(expected_colors)}, Detected: {top_str})"
+    else:
+        exp_str = ", ".join([c.title() for c in expected_colors])
+        return False, f"Color & Image mismatch: Color Name stated as '{color_name}' expects [{exp_str}], but image dominant colors are detected as [{top_str}]."
 
 def _normalize_img_url(url):
     u = str(url).strip()
@@ -41,12 +162,15 @@ def download_and_hash_image(url):
         avg = sum(pixels) / 64
         ahash = "".join("1" if p > avg else "0" for p in pixels)
         
+        color_shares = analyze_image_dominant_colors(data)
         res = (ahash, None)
     except Exception as e:
+        color_shares = {}
         res = (None, str(e))
         
     with _CACHE_LOCK:
         _IMAGE_HASH_CACHE[url] = res
+        _IMAGE_COLOR_CACHE[url] = color_shares
     return res
 
 def pre_hash_image_urls(urls: List[str], max_workers: int = 30):
@@ -728,6 +852,15 @@ def validate_row_internal(
                         if not ok:
                             add_exc("Images", url, "Error", f"Image #{i+1} link is {err_msg}.")
 
+                # Color Name vs Primary Image Color Verification
+                color_name_val = clean_str(row.get("color_name", ""))
+                if color_name_val and img_urls:
+                    first_img_url = img_urls[0]
+                    if URL_REGEX.match(first_img_url):
+                        ok_color, color_err_msg = verify_color_name_against_image(color_name_val, first_img_url)
+                        if not ok_color:
+                            add_exc("Color Name", color_name_val, "Warning", color_err_msg)
+
         size_chart_raw = row.get("size_chart")
         if is_empty(size_chart_raw):
             add_exc("Size Chart", size_chart_raw, "Error", "Size Chart attachment is missing.")
@@ -1264,6 +1397,15 @@ def compare_source_and_live(
                         s_c = str(s_val).strip().lower()
                         l_c = str(l_val).strip().lower()
                         is_diff = (s_c != l_c) and (s_c not in l_c) and (l_c not in s_c) if s_c and l_c else (s_c != l_c)
+                        if not is_diff and (s_val or l_val):
+                            c_name_check = str(s_val).strip() if s_val else str(l_val).strip()
+                            live_img_str = live_row.get("images", "")
+                            if c_name_check and live_img_str:
+                                live_imgs = [img.strip() for img in re.split(r"[,;]", str(live_img_str)) if img.strip()]
+                                if live_imgs and URL_REGEX.match(live_imgs[0]):
+                                    ok_c, _ = verify_color_name_against_image(c_name_check, live_imgs[0])
+                                    if not ok_c:
+                                        is_diff = True
                     elif field == "ecommerce_status":
                         is_diff = _normalise_status(s_val) != _normalise_status(l_val)
                     elif field in ["price", "quantity"]:
