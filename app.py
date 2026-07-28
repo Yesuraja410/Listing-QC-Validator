@@ -462,7 +462,7 @@ if target_loaded:
                             st.error("Could not parse any valid listing data from the uploaded live files. Please verify the headers and formats.")
                             st.stop()
                         
-                        from utils.validators import build_content_maps, build_zecom_maps, _clean_sku
+                        from utils.validators import build_content_maps, build_zecom_maps, _clean_sku, is_empty
                         from utils.file_loaders import _normalise_article_no
                         
                         content_maps = build_content_maps(content_df)
@@ -475,13 +475,10 @@ if target_loaded:
                         article_to_ecomstatus = zecom_maps[1] if zecom_maps else {}
                         
                         # Index consolidated_live by cleaned SKU or product_id for fast lookup
-                        is_shopee_or_tiktok = channel and any(p in channel.lower() for p in ["shopee", "tiktok"])
                         is_shopee = channel and "shopee" in channel.lower()
                         
                         if is_shopee and "product_id" in consolidated_live.columns:
                             consolidated_live["_match_key"] = consolidated_live["product_id"].astype(str).str.strip() + " | " + consolidated_live["color_name"].astype(str).str.strip().str.lower()
-                        elif is_shopee_or_tiktok and "product_id" in consolidated_live.columns:
-                            consolidated_live["_match_key"] = consolidated_live["product_id"].astype(str).str.strip()
                         else:
                             consolidated_live["_match_key"] = consolidated_live["sku"].astype(str).str.strip().apply(_clean_sku)
                             
@@ -498,8 +495,6 @@ if target_loaded:
                             prod_id_val = str(row.get("product_id", "")).strip()
                             if is_shopee and prod_id_val:
                                 match_k = prod_id_val + " | " + str(row.get("color_name", "")).strip().lower()
-                            elif is_shopee_or_tiktok and prod_id_val:
-                                match_k = prod_id_val
                             else:
                                 match_k = clean_s
                             
@@ -516,22 +511,47 @@ if target_loaded:
                             # Standardize gender: from content file gender
                             gender_val = sku_to_gender.get(clean_s, "")
                             
+                            if live_row:
+                                ecommerce_status = live_row.get("ecommerce_status", "Active")
+                                if is_empty(ecommerce_status):
+                                    ecommerce_status = "Active"
+                                product_name = live_row.get("product_name", "")
+                                color_name = live_row.get("color_name", "")
+                                size = live_row.get("size", "")
+                                price = live_row.get("price", "0.0")
+                                quantity = live_row.get("quantity", "0")
+                                images = live_row.get("images", "")
+                                size_chart = live_row.get("size_chart", "")
+                                source_file = live_row.get("_source_file", "Live Report")
+                                row_num = live_row.get("_original_row_number", idx + 2)
+                            else:
+                                ecommerce_status = "Missing in Live"
+                                product_name = ""
+                                color_name = ""
+                                size = ""
+                                price = "0.0"
+                                quantity = "0"
+                                images = ""
+                                size_chart = ""
+                                source_file = row.get("_source_file", "Upload Sheet")
+                                row_num = row.get("_original_row_number", idx + 2)
+                                
                             post_qc_records.append({
                                 "sku": clean_s,
                                 "product_id": prod_id_val,
                                 "article_number": ref_art,
                                 "launch_date": ref_ld,
-                                "ecommerce_status": row.get("ecommerce_status", "Active"),
+                                "ecommerce_status": ecommerce_status,
                                 "gender": gender_val,
-                                "product_name": row.get("product_name", ""),
-                                "color_name": row.get("color_name", ""),
-                                "size": row.get("size", ""),
-                                "price": row.get("price", "0.0"),
-                                "quantity": row.get("quantity", "0"),
-                                "images": row.get("images", ""),
-                                "size_chart": row.get("size_chart", ""),
-                                "_original_row_number": row.get("_original_row_number", idx + 2),
-                                "_source_file": row.get("_source_file", "Upload Sheet")
+                                "product_name": product_name,
+                                "color_name": color_name,
+                                "size": size,
+                                "price": price,
+                                "quantity": quantity,
+                                "images": images,
+                                "size_chart": size_chart,
+                                "_original_row_number": row_num,
+                                "_source_file": source_file
                             })
                             
                         if not post_qc_records:
