@@ -1486,7 +1486,7 @@ def _read_live_df_optimized(data: bytes, is_csv: bool, header_row: int, platform
                 df_headers = pd.read_excel(io.BytesIO(data), header=header_row, nrows=0)
                 
         headers = df_headers.columns.tolist()
-        keywords = ["sku", "parent", "name", "title", "quantity", "stock", "qty", "price", "variation", "color", "colour", "size", "image", "chart", "variationskus", "productid", "itemid"]
+        keywords = ["sku", "parent", "name", "title", "quantity", "stock", "qty", "price", "variation", "color", "colour", "size", "image", "chart", "variationskus", "productid", "product id", "product_id", "itemid", "item id", "item_id"]
         usecols = [h for h in headers if any(k in str(h).lower() for k in keywords)]
         if not usecols:
             usecols = None
@@ -1582,6 +1582,21 @@ def process_live_files(uploaded_files, channel: str) -> pd.DataFrame:
         combined_cleaned["product_id"] = combined_cleaned["product_id"].astype(str).str.strip()
         combined_cleaned.loc[combined_cleaned["product_id"].isin(["", "nan", "None", "NaN", "<NA>"]), "product_id"] = combined_cleaned["sku"]
         combined_cleaned["color_name"] = combined_cleaned["color_name"].astype(str).str.strip().str.lower()
+        
+        # Priority sort to select rows with actual SKUs and real price/quantity first
+        priorities = []
+        for _, r in combined_cleaned.iterrows():
+            s_val = str(r.get("sku", "")).strip()
+            p_val = str(r.get("product_id", "")).strip()
+            pr_val = str(r.get("price", "0.0")).strip()
+            
+            has_real_sku = 1 if (not s_val or s_val == p_val or len(s_val) < 8) else 0
+            has_real_price = 1 if (pr_val in ["", "0", "0.0", "0.00", "nan", "None"]) else 0
+            priorities.append((has_real_sku, has_real_price))
+            
+        combined_cleaned["_priority"] = priorities
+        combined_cleaned = combined_cleaned.sort_values(by="_priority").drop(columns=["_priority"])
+        
         consolidated = combined_cleaned.groupby(["product_id", "color_name"], as_index=False).first()
     elif platform == "tiktok" and "product_id" in combined_cleaned.columns:
         combined_cleaned["product_id"] = combined_cleaned["product_id"].astype(str).str.strip()
