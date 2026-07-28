@@ -594,5 +594,62 @@ class TestValidators(unittest.TestCase):
         sc_excs = [e for e in excs if e["Field"] == "Size Chart"]
         self.assertEqual(len(sc_excs), 0, "Bags should be exempt from missing size chart error")
 
+    def test_shopee_live_reports_consolidation(self):
+        from listing_qc_validator.utils.file_loaders import process_live_files
+        import io
+        import zipfile
+
+        df_prod = pd.DataFrame([{
+            "Product Name": "Test Product",
+            "Product ID": "12345",
+            "Variation Name": "Black, M",
+            "Price": "89.99",
+            "Stock": "10",
+            "Variation SKU": "SKU_VAR_BLACK_M"
+        }])
+        
+        df_media = pd.DataFrame([{
+            "Product ID": "12345",
+            "Variation Name": "Black, M",
+            "Cover Image": "http://image.com/cover.jpg",
+            "Size Chart": "http://image.com/sc.jpg"
+        }])
+        
+        out_prod = io.BytesIO()
+        df_prod.to_excel(out_prod, index=False, startrow=2)
+        out_prod.seek(0)
+        
+        out_media = io.BytesIO()
+        df_media.to_excel(out_media, index=False, startrow=2)
+        out_media.seek(0)
+        
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("Product_Info.xlsx", out_prod.read())
+            zf.writestr("Media_Info.xlsx", out_media.read())
+        zip_buffer.seek(0)
+        
+        class MockFile:
+            def __init__(self, buffer, name):
+                self.buffer = buffer
+                self.name = name
+            def read(self):
+                return self.buffer.getvalue()
+            def seek(self, pos):
+                self.buffer.seek(pos)
+                
+        mock_zip = MockFile(zip_buffer, "shopee_live.zip")
+        
+        consolidated = process_live_files([mock_zip], channel="Shopee PH")
+        
+        self.assertEqual(len(consolidated), 1)
+        row = consolidated.iloc[0]
+        self.assertEqual(row["sku"], "SKU_VAR_BLACK_M")
+        self.assertEqual(row["product_id"], "12345")
+        self.assertEqual(row["price"], "89.99")
+        self.assertEqual(row["quantity"], "10")
+        self.assertEqual(row["images"], "http://image.com/cover.jpg")
+        self.assertEqual(row["size_chart"], "http://image.com/sc.jpg")
+
 if __name__ == '__main__':
     unittest.main()
