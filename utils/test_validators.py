@@ -651,5 +651,17 @@ class TestValidators(unittest.TestCase):
         self.assertEqual(row["images"], "http://image.com/cover.jpg")
         self.assertEqual(row["size_chart"], "http://image.com/sc.jpg")
 
+    def test_detect_header_row_avoids_data_rows(self):
+        from listing_qc_validator.utils.file_loaders import detect_header_row
+        import io
+        
+        csv_data = (
+            "Seller SKU,Quantity,Price,Name,Cover Image,Image 2,Size Chart\n"
+            "4069161482557,10,89.99,PUMA Tee Black Variation,https://img.com/1.jpg,https://img.com/2.jpg,https://img.com/sc.jpg\n"
+        ).encode("utf-8")
+        
+        h_row = detect_header_row(csv_data, is_csv=True)
+        self.assertEqual(h_row, 0, "Should correctly select row 0 (headers) instead of row 1 (data with URLs)")
+
 if __name__ == '__main__':
     unittest.main()
