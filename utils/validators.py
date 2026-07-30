@@ -686,7 +686,7 @@ def validate_row_internal(
         if is_empty(row.get("size")):
             add_exc("Size", row.get("size"), "Error", "Size is missing.")
 
-        # 9. Quantity Check: Must be exactly 0 for target sheet (if not is_live_report), otherwise just must be numeric
+        # 9. Quantity Check: Must be exactly 0 for target sheet, or if Shopee Post QC
         qty_raw = row.get("quantity")
         is_live_report = row.get("_is_live_report", False)
         if is_empty(qty_raw):
@@ -694,8 +694,9 @@ def validate_row_internal(
         else:
             try:
                 qty = float(qty_raw)
-                if not is_live_report and qty != 0:
-                    add_exc("Quantity", qty_raw, "Error", f"Quantity must be exactly 0 (Uploaded: {qty_raw}).")
+                is_shopee = channel and "shopee" in channel.lower()
+                if (not is_live_report or is_shopee) and qty != 0:
+                    add_exc("Quantity", qty_raw, "Error", f"Quantity must be exactly 0 (Stated: {qty_raw}).")
             except (ValueError, TypeError):
                 add_exc("Quantity", qty_raw, "Error", "Quantity is not a valid number.")
 
