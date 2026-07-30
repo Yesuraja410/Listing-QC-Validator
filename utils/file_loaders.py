@@ -1533,12 +1533,31 @@ def detect_header_row(data: bytes, is_csv: bool) -> int:
 
     keywords = ["sku", "product id", "product_id", "variation name", "variation", "price", "stock", "quantity", "image", "chart", "item id", "itemid"]
     
+    def is_header_val_likely(val):
+        s = str(val).strip()
+        if not s:
+            return False
+        s_low = s.lower()
+        if s_low.startswith(("http://", "https://")):
+            return False
+        if s_low.endswith((".jpg", ".jpeg", ".png", ".gif", ".webp")):
+            return False
+        # Ignore numeric values which represent row data
+        try:
+            float(s.replace(",", ""))
+            return False
+        except ValueError:
+            pass
+        return True
+
     best_row_idx = 0
     max_matches = -1
     
     for idx, row in df.iterrows():
         matches = 0
         for val in row:
+            if not is_header_val_likely(val):
+                continue
             val_str = str(val).lower()
             if any(k in val_str for k in keywords):
                 matches += 1
