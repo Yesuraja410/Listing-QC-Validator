@@ -667,12 +667,8 @@ if target_loaded:
             qty_ok = qty_excs.empty
             qty_badge = '<span class="qc-status-ok">OK</span>' if qty_ok else '<span class="qc-status-mismatch">Mismatch</span>'
             qty_rows = qty_excs.groupby(["Source File", "Row Number"]).ngroups if not qty_ok else 0
-            if qc_stage == "Post QC":
-                qty_text = "All quantities are valid numbers" if qty_ok else f"{qty_rows} invalid quantity values found"
-                qty_target_cond = "Should be valid numeric value"
-            else:
-                qty_text = "Quantity is 0 for all items" if qty_ok else f"{qty_rows} non-zero quantity items found"
-                qty_target_cond = "Quantity must be exactly 0 for all items"
+            qty_text = "Quantity is 0 for all items" if qty_ok else f"{qty_rows} non-zero quantity items found"
+            qty_target_cond = "Quantity must be exactly 0 for all items"
             
             # 8. Images Check
             img_excs = exc_df[exc_df["Field"] == "Images"] if not exc_df.empty else pd.DataFrame()
