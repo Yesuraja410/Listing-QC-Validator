@@ -1515,6 +1515,43 @@ def _read_live_df_optimized(data: bytes, is_csv: bool, header_row: int, platform
             return pd.DataFrame()
 
 
+def detect_header_row(data: bytes, is_csv: bool) -> int:
+    try:
+        if is_csv:
+            df = pd.read_csv(io.BytesIO(data), nrows=5, header=None, dtype=str)
+        else:
+            try:
+                import python_calamine
+                df = pd.read_excel(io.BytesIO(data), nrows=5, header=None, dtype=str, engine="calamine")
+            except ImportError:
+                df = pd.read_excel(io.BytesIO(data), nrows=5, header=None, dtype=str)
+    except Exception:
+        return 0
+
+    if df.empty:
+        return 0
+
+    keywords = ["sku", "product id", "product_id", "variation name", "variation", "price", "stock", "quantity", "image", "chart", "item id", "itemid"]
+    
+    best_row_idx = 0
+    max_matches = -1
+    
+    for idx, row in df.iterrows():
+        matches = 0
+        for val in row:
+            val_str = str(val).lower()
+            if any(k in val_str for k in keywords):
+                matches += 1
+        if matches > max_matches:
+            max_matches = matches
+            best_row_idx = idx
+            
+    if max_matches <= 0:
+        return 0
+        
+    return best_row_idx
+
+
 def process_live_files(uploaded_files, channel: str) -> pd.DataFrame:
     import zipfile
     platform = channel.split()[0].lower()
@@ -1530,16 +1567,16 @@ def process_live_files(uploaded_files, channel: str) -> pd.DataFrame:
                     if entry.lower().endswith((".xlsx", ".xls", ".csv")):
                         with zf.open(entry) as f:
                             data = f.read()
-                            h_row = 2 if platform in ["tiktok", "shopee"] else 0
                             is_csv = entry.lower().endswith(".csv")
+                            h_row = detect_header_row(data, is_csv)
                             df = _read_live_df_optimized(data, is_csv, h_row, platform=platform)
                             if not df.empty:
                                 all_dfs.append(df)
         else:
             raw = file.read()
             file.seek(0)
-            h_row = 2 if platform in ["tiktok", "shopee"] else 0
             is_csv = name.endswith(".csv")
+            h_row = detect_header_row(raw, is_csv)
             try:
                 df = _read_live_df_optimized(raw, is_csv, h_row, platform=platform)
                 if not df.empty:
