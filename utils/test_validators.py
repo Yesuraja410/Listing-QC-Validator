@@ -333,7 +333,7 @@ class TestValidators(unittest.TestCase):
                 "color_name": "Black",
                 "size": "42",
                 "price": "89.99",
-                "quantity": "10",
+                "quantity": "0",
                 "images": "https://puma.com/image.jpg",
                 "size_chart": "https://puma.com/sizechart.jpg",
                 "ecommerce_status": "Active"
