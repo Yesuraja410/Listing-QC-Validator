@@ -331,12 +331,7 @@ class ListingQCGUI:
                 sku_to_gender = content_maps[4] if content_maps else {}
                 article_to_launchdate = zecom_maps[0] if zecom_maps else {}
                 
-                # Fetch live listings dict or product_id for fast lookup
-                is_shopee = chan and "shopee" in chan.lower()
-                if is_shopee and "product_id" in df_live.columns:
-                    df_live["_match_key"] = df_live["product_id"].astype(str).str.strip() + " | " + df_live["color_name"].astype(str).str.strip().str.lower()
-                else:
-                    df_live["_match_key"] = df_live["sku"].astype(str).str.strip().apply(_clean_sku)
+                df_live["_match_key"] = df_live["sku"].astype(str).str.strip().apply(_clean_sku)
                 live_dict = df_live.drop_duplicates(subset=["_match_key"]).set_index("_match_key").to_dict("index")
                 
                 post_qc_records = []
@@ -347,10 +342,7 @@ class ListingQCGUI:
                         continue
                     
                     prod_id_val = str(row.get("product_id", "")).strip()
-                    if is_shopee and prod_id_val:
-                        match_k = prod_id_val + " | " + str(row.get("color_name", "")).strip().lower()
-                    else:
-                        match_k = clean_s
+                    match_k = clean_s
                     
                     ref_art = sku_to_article.get(clean_s, "")
                     norm_art = _normalise_article_no(ref_art)
@@ -385,7 +377,7 @@ class ListingQCGUI:
                         
                     post_qc_records.append({
                         "sku": clean_s,
-                        "product_id": prod_id_val,
+                        "product_id": prod_id_val if prod_id_val else (live_row.get("product_id", "") if live_row else ""),
                         "article_number": ref_art,
                         "launch_date": ref_ld,
                         "ecommerce_status": ecommerce_status,
