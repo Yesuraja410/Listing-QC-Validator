@@ -1475,61 +1475,78 @@ def parse_live_zalora(df: pd.DataFrame) -> pd.DataFrame:
 
 def _read_live_df_optimized(data: bytes, is_csv: bool, header_row: int, platform: str = None) -> pd.DataFrame:
     try:
-        # Read headers first
         if is_csv:
             encoding = "cp1252" if platform == "zalora" else None
             df_headers = pd.read_csv(io.BytesIO(data), header=header_row, nrows=0, encoding=encoding)
-        else:
-            try:
-                import python_calamine
-                df_headers = pd.read_excel(io.BytesIO(data), header=header_row, nrows=0, engine="calamine")
-            except ImportError:
-                df_headers = pd.read_excel(io.BytesIO(data), header=header_row, nrows=0)
-                
-        headers = df_headers.columns.tolist()
-        keywords = ["sku", "parent", "name", "title", "quantity", "stock", "qty", "price", "variation", "color", "colour", "size", "image", "chart", "variationskus", "productid", "product id", "product_id", "itemid", "item id", "item_id"]
-        usecols = [h for h in headers if any(k in str(h).lower() for k in keywords)]
-        if not usecols:
-            usecols = None
-            
-        if is_csv:
-            encoding = "cp1252" if platform == "zalora" else None
+            headers = df_headers.columns.tolist()
+            keywords = ["sku", "parent", "name", "title", "quantity", "stock", "qty", "price", "variation", "color", "colour", "size", "image", "chart", "variationskus", "productid", "product id", "product_id", "itemid", "item id", "item_id"]
+            usecols = [h for h in headers if any(k in str(h).lower() for k in keywords)]
+            if not usecols:
+                usecols = None
             return pd.read_csv(io.BytesIO(data), header=header_row, usecols=usecols, dtype=str, encoding=encoding)
         else:
             try:
                 import python_calamine
-                return pd.read_excel(io.BytesIO(data), header=header_row, usecols=usecols, dtype=str, engine="calamine")
-            except ImportError:
+                wb = python_calamine.CalamineWorkbook.from_filelike(io.BytesIO(data))
+                if not wb.sheet_names:
+                    return pd.DataFrame()
+                sheet_name = wb.sheet_names[0]
+                rows = wb.get_sheet_by_name(sheet_name).to_python()
+                if not rows or len(rows) <= header_row:
+                    return pd.DataFrame()
+                    
+                header_line = rows[header_row]
+                headers = [str(h).strip() if h is not None else f"Unnamed_{i}" for i, h in enumerate(header_line)]
+                keywords = ["sku", "parent", "name", "title", "quantity", "stock", "qty", "price", "variation", "color", "colour", "size", "image", "chart", "variationskus", "productid", "product id", "product_id", "itemid", "item id", "item_id"]
+                
+                col_indices = {i: h for i, h in enumerate(headers) if any(k in h.lower() for k in keywords)}
+                if not col_indices:
+                    col_indices = {i: h for i, h in enumerate(headers)}
+                    
+                records = []
+                for row in rows[header_row + 1:]:
+                    record = {}
+                    for idx, col_name in col_indices.items():
+                        if idx < len(row):
+                            val = row[idx]
+                            record[col_name] = str(val).strip() if val is not None else ""
+                        else:
+                            record[col_name] = ""
+                    records.append(record)
+                    
+                return pd.DataFrame(records)
+            except Exception:
+                df_headers = pd.read_excel(io.BytesIO(data), header=header_row, nrows=0)
+                headers = df_headers.columns.tolist()
+                keywords = ["sku", "parent", "name", "title", "quantity", "stock", "qty", "price", "variation", "color", "colour", "size", "image", "chart", "variationskus", "productid", "product id", "product_id", "itemid", "item id", "item_id"]
+                usecols = [h for h in headers if any(k in str(h).lower() for k in keywords)]
+                if not usecols:
+                    usecols = None
                 return pd.read_excel(io.BytesIO(data), header=header_row, usecols=usecols, dtype=str)
     except Exception:
-        try:
-            if is_csv:
-                encoding = "cp1252" if platform == "zalora" else None
-                return pd.read_csv(io.BytesIO(data), header=header_row, dtype=str, encoding=encoding)
-            else:
-                try:
-                    import python_calamine
-                    return pd.read_excel(io.BytesIO(data), header=header_row, dtype=str, engine="calamine")
-                except ImportError:
-                    return pd.read_excel(io.BytesIO(data), header=header_row, dtype=str)
-        except Exception:
-            return pd.DataFrame()
+        return pd.DataFrame()
 
 
 def detect_header_row(data: bytes, is_csv: bool) -> int:
     try:
         if is_csv:
             df = pd.read_csv(io.BytesIO(data), nrows=5, header=None, dtype=str)
+            rows = df.values.tolist()
         else:
             try:
                 import python_calamine
-                df = pd.read_excel(io.BytesIO(data), nrows=5, header=None, dtype=str, engine="calamine")
-            except ImportError:
+                wb = python_calamine.CalamineWorkbook.from_filelike(io.BytesIO(data))
+                if not wb.sheet_names:
+                    return 0
+                sheet_name = wb.sheet_names[0]
+                rows = wb.get_sheet_by_name(sheet_name).to_python()[:5]
+            except Exception:
                 df = pd.read_excel(io.BytesIO(data), nrows=5, header=None, dtype=str)
+                rows = df.values.tolist()
     except Exception:
         return 0
 
-    if df.empty:
+    if not rows:
         return 0
 
     keywords = ["sku", "product id", "product_id", "variation name", "variation", "price", "stock", "quantity", "image", "chart", "item id", "itemid"]
@@ -1543,7 +1560,6 @@ def detect_header_row(data: bytes, is_csv: bool) -> int:
             return False
         if s_low.endswith((".jpg", ".jpeg", ".png", ".gif", ".webp")):
             return False
-        # Ignore numeric values which represent row data
         try:
             float(s.replace(",", ""))
             return False
@@ -1554,7 +1570,7 @@ def detect_header_row(data: bytes, is_csv: bool) -> int:
     best_row_idx = 0
     max_matches = -1
     
-    for idx, row in df.iterrows():
+    for idx, row in enumerate(rows):
         matches = 0
         for val in row:
             if not is_header_val_likely(val):
