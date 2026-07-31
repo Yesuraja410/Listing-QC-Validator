@@ -1227,19 +1227,13 @@ def compare_source_and_live(
         live_clean[match_col] = live_clean[match_col].astype(str).str.strip().apply(_clean_sku)
         live_clean = live_clean[live_clean[match_col] != ""]
         
-    if is_shopee and "product_id" in src_clean.columns and "product_id" in live_clean.columns and "color_name" in src_clean.columns and "color_name" in live_clean.columns:
-        src_clean["_match_key"] = src_clean["product_id"].astype(str).str.strip() + " | " + src_clean["color_name"].astype(str).str.strip().str.lower()
-        live_clean["_match_key"] = live_clean["product_id"].astype(str).str.strip() + " | " + live_clean["color_name"].astype(str).str.strip().str.lower()
+    composite_match = ("size" in src_clean.columns and "size" in live_clean.columns) and (match_col != "product_id")
+    if composite_match:
+        src_clean["_match_key"] = src_clean[match_col] + " | " + src_clean["size"].astype(str).str.strip().apply(correct_size).str.lower()
+        live_clean["_match_key"] = live_clean[match_col] + " | " + live_clean["size"].astype(str).str.strip().apply(correct_size).str.lower()
         key_col = "_match_key"
-        composite_match = False
     else:
-        composite_match = ("size" in src_clean.columns and "size" in live_clean.columns) and (match_col != "product_id")
-        if composite_match:
-            src_clean["_match_key"] = src_clean[match_col] + " | " + src_clean["size"].astype(str).str.strip().apply(correct_size).str.lower()
-            live_clean["_match_key"] = live_clean[match_col] + " | " + live_clean["size"].astype(str).str.strip().apply(correct_size).str.lower()
-            key_col = "_match_key"
-        else:
-            key_col = match_col
+        key_col = match_col
         
     # Deduplicate match keys to make dict conversion unique
     src_clean = src_clean.drop_duplicates(subset=[key_col])
