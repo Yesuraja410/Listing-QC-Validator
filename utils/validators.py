@@ -142,11 +142,12 @@ EXEMPT_SIZE_CHART_KEYWORDS = [
     r"\bglove\b", r"\bgloves\b", r"\bgoalkeeper\b"
 ]
 
+EXEMPT_SIZE_CHART_REGEX = re.compile("|".join(EXEMPT_SIZE_CHART_KEYWORDS), re.IGNORECASE)
+
 def is_size_chart_exempt(product_name: str) -> bool:
     if not product_name:
         return False
-    pn_low = str(product_name).lower()
-    return any(re.search(pat, pn_low) for pat in EXEMPT_SIZE_CHART_KEYWORDS)
+    return bool(EXEMPT_SIZE_CHART_REGEX.search(product_name))
 
 def _normalize_img_url(url):
     u = str(url).strip()
