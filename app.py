@@ -474,14 +474,7 @@ if target_loaded:
                         article_to_launchdate = zecom_maps[0] if zecom_maps else {}
                         article_to_ecomstatus = zecom_maps[1] if zecom_maps else {}
                         
-                        # Index consolidated_live by cleaned SKU or product_id for fast lookup
-                        is_shopee = channel and "shopee" in channel.lower()
-                        
-                        if is_shopee and "product_id" in consolidated_live.columns:
-                            consolidated_live["_match_key"] = consolidated_live["product_id"].astype(str).str.strip() + " | " + consolidated_live["color_name"].astype(str).str.strip().str.lower()
-                        else:
-                            consolidated_live["_match_key"] = consolidated_live["sku"].astype(str).str.strip().apply(_clean_sku)
-                            
+                        consolidated_live["_match_key"] = consolidated_live["sku"].astype(str).str.strip().apply(_clean_sku)
                         live_dict = consolidated_live.drop_duplicates(subset=["_match_key"]).set_index("_match_key").to_dict("index")
                         
                         # Build a new dataframe for Post QC validation
@@ -493,10 +486,7 @@ if target_loaded:
                                 continue
                                 
                             prod_id_val = str(row.get("product_id", "")).strip()
-                            if is_shopee and prod_id_val:
-                                match_k = prod_id_val + " | " + str(row.get("color_name", "")).strip().lower()
-                            else:
-                                match_k = clean_s
+                            match_k = clean_s
                             
                             # 1. Fetch Article No from Content File
                             ref_art = sku_to_article.get(clean_s, "")
@@ -538,7 +528,7 @@ if target_loaded:
                                 
                             post_qc_records.append({
                                 "sku": clean_s,
-                                "product_id": prod_id_val,
+                                "product_id": prod_id_val if prod_id_val else (live_row.get("product_id", "") if live_row else ""),
                                 "article_number": ref_art,
                                 "launch_date": ref_ld,
                                 "ecommerce_status": ecommerce_status,
