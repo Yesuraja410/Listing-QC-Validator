@@ -1299,24 +1299,25 @@ def parse_live_shopee(df: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame()
     df_data = _normalise_cols(df.copy())
     
-    sku_col = next((c for c in df_data.columns if c.lower() in ["sku", "variation sku", "seller sku"]), None)
+    sku_col = next((c for c in df_data.columns if "sku" in c.lower() and "parent" not in c.lower()), None)
     if sku_col:
         df_data = _clean_live_df_skipping(df_data, sku_col, "shopee")
         
-    parent_col = next((c for c in df_data.columns if c.lower() in ["parent sku", "parentsku", "parent_sku"]), None)
-    prod_col = next((c for c in df_data.columns if c.lower().replace(" ", "").replace("_", "") in ["productid", "itemid"]), None)
-    name_col = next((c for c in df_data.columns if c.lower() in ["product name", "name", "product_name"]), None)
-    price_col = next((c for c in df_data.columns if c.lower() == "price"), None)
-    if not price_col:
-        price_col = next((c for c in df_data.columns if c.lower() in ["price", "selling price", "mp price"]), None)
-    stock_col = next((c for c in df_data.columns if c.lower() in ["stock", "quantity", "qty", "mp stock"]), None)
+    parent_col = next((c for c in df_data.columns if "parent" in c.lower() and "sku" in c.lower()), None)
+    prod_col = next((c for c in df_data.columns if "product" in c.lower() and "id" in c.lower() or "item" in c.lower() and "id" in c.lower()), None)
+    name_col = next((c for c in df_data.columns if "product" in c.lower() and "name" in c.lower()), None)
+    if not name_col:
+        name_col = next((c for c in df_data.columns if "name" in c.lower() and "variation" not in c.lower() and "parent" not in c.lower()), None)
+        
+    price_col = next((c for c in df_data.columns if "price" in c.lower()), None)
+    stock_col = next((c for c in df_data.columns if "stock" in c.lower() or "quantity" in c.lower() or "qty" in c.lower()), None)
     
-    var_col = next((c for c in df_data.columns if c.lower() in ["variation name", "variation", "variation_name"]), None)
+    var_col = next((c for c in df_data.columns if "variation" in c.lower() and "name" in c.lower() or c.lower() in ["variation", "variation_name"]), None)
     color_col = next((c for c in df_data.columns if c.lower() in ["color", "colour", "color name", "color_name"]), None)
     size_col = next((c for c in df_data.columns if c.lower() in ["size", "size_name", "size name"]), None)
     
-    img_cols = [c for c in df_data.columns if any(k in c.lower() for k in ["cover image", "item image", "image"]) and not "chart" in c.lower()]
-    sc_col = next((c for c in df_data.columns if "size chart" in c.lower()), None)
+    img_cols = [c for c in df_data.columns if "image" in c.lower() and "chart" not in c.lower()]
+    sc_col = next((c for c in df_data.columns if "chart" in c.lower()), None)
     
     records = []
     for _, row in df_data.iterrows():
