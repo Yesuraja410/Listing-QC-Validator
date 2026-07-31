@@ -1635,26 +1635,57 @@ def process_live_files(uploaded_files, channel: str) -> pd.DataFrame:
         combined_cleaned[col] = combined_cleaned[col].astype(str).str.strip()
         combined_cleaned.loc[combined_cleaned[col].isin(["", "nan", "None", "NaN", "<NA>"]), col] = np.nan
         
-    if platform == "shopee" and "product_id" in combined_cleaned.columns:
+    if platform == "shopee":
         combined_cleaned["product_id"] = combined_cleaned["product_id"].astype(str).str.strip()
-        combined_cleaned.loc[combined_cleaned["product_id"].isin(["", "nan", "None", "NaN", "<NA>"]), "product_id"] = combined_cleaned["sku"]
-        combined_cleaned["color_name"] = combined_cleaned["color_name"].astype(str).str.strip().str.lower()
+        combined_cleaned["sku"] = combined_cleaned["sku"].astype(str).str.strip()
         
-        # Priority sort to select rows with actual SKUs and real price/quantity first
-        priorities = []
+        # Separate sales rows from media rows
+        sales_rows = []
+        media_rows = []
         for _, r in combined_cleaned.iterrows():
             s_val = str(r.get("sku", "")).strip()
             p_val = str(r.get("product_id", "")).strip()
-            pr_val = str(r.get("price", "0.0")).strip()
+            imgs = str(r.get("images", "")).strip()
+            sc = str(r.get("size_chart", "")).strip()
             
-            has_real_sku = 1 if (not s_val or s_val == p_val or len(s_val) < 8) else 0
-            has_real_price = 1 if (pr_val in ["", "0", "0.0", "0.00", "nan", "None"]) else 0
-            priorities.append((has_real_sku, has_real_price))
+            is_media = (imgs or sc) and (not s_val or s_val == p_val or len(s_val) < 8)
+            if is_media:
+                media_rows.append(r)
+            else:
+                sales_rows.append(r)
+                
+        if not sales_rows:
+            sales_rows = combined_cleaned.to_dict('records')
             
-        combined_cleaned["_priority"] = priorities
-        combined_cleaned = combined_cleaned.sort_values(by="_priority").drop(columns=["_priority"])
+        df_sales = pd.DataFrame(sales_rows)
+        df_media = pd.DataFrame(media_rows)
         
-        consolidated = combined_cleaned.groupby(["product_id", "color_name"], as_index=False).first()
+        # Cast to object type to avoid pandas float64 insert TypeErrors
+        if not df_sales.empty:
+            df_sales = df_sales.astype(object)
+        if not df_media.empty:
+            df_media = df_media.astype(object)
+        
+        media_map = {}
+        if not df_media.empty:
+            for _, r in df_media.iterrows():
+                pid = str(r.get("product_id", "")).strip()
+                if pid and pid not in ["nan", "None", ""]:
+                    media_map[pid] = {
+                        "images": str(r.get("images", "")).strip(),
+                        "size_chart": str(r.get("size_chart", "")).strip()
+                    }
+                    
+        if not df_sales.empty:
+            for idx, r in df_sales.iterrows():
+                pid = str(r.get("product_id", "")).strip()
+                if pid in media_map:
+                    if not str(r.get("images", "")).strip() or str(r.get("images", "")).strip() == "nan":
+                        df_sales.at[idx, "images"] = media_map[pid]["images"]
+                    if not str(r.get("size_chart", "")).strip() or str(r.get("size_chart", "")).strip() == "nan":
+                        df_sales.at[idx, "size_chart"] = media_map[pid]["size_chart"]
+                        
+        consolidated = df_sales.groupby("sku", as_index=False).first()
     elif platform == "tiktok" and "product_id" in combined_cleaned.columns:
         combined_cleaned["product_id"] = combined_cleaned["product_id"].astype(str).str.strip()
         combined_cleaned.loc[combined_cleaned["product_id"].isin(["", "nan", "None", "NaN", "<NA>"]), "product_id"] = combined_cleaned["sku"]
