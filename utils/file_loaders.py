@@ -1031,18 +1031,20 @@ def load_zecom(file, country="PH"):
     else:
         df["rrp_price"] = ""
 
-    launch_col = None
-    for c in ["Launch Dates", "Launch Date", "LaunchDate", "Launch"]:
-        if c in df.columns:
-            launch_col = c
-            break
-    if launch_col is None:
-        for c in df.columns:
-            if "launch" in c.lower():
+    has_platform_launch = any(any(k in str(col).lower() for k in ["laz & shp", "zal & tk", "tiktok & zalora"]) for col in df.columns)
+    if not has_platform_launch:
+        launch_col = None
+        for c in ["Launch Dates", "Launch Date", "LaunchDate", "Launch"]:
+            if c in df.columns:
                 launch_col = c
                 break
-    if launch_col and launch_col != "Launch Date":
-        df = df.rename(columns={launch_col: "Launch Date"})
+        if launch_col is None:
+            for c in df.columns:
+                if "launch" in c.lower():
+                    launch_col = c
+                    break
+        if launch_col and launch_col != "Launch Date":
+            df = df.rename(columns={launch_col: "Launch Date"})
 
     today = pd.Timestamp.today().normalize()
     if "Launch Date" in df.columns:
