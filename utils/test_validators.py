@@ -663,5 +663,53 @@ class TestValidators(unittest.TestCase):
         h_row = detect_header_row(csv_data, is_csv=True)
         self.assertEqual(h_row, 0, "Should correctly select row 0 (headers) instead of row 1 (data with URLs)")
 
+    def test_dynamic_zecom_launch_date_headers(self):
+        from listing_qc_validator.utils.validators import build_zecom_maps
+        
+        # Test Lazada launch date header alias
+        df_laz = pd.DataFrame([
+            {"Article No": "404620_07", "LAZ & SHP Launch Date": "2026-06-20", "Ecom_Lazada": "Yes", "rrp_price": "89.99"}
+        ])
+        maps = build_zecom_maps(df_laz, "Lazada PH")
+        self.assertEqual(maps[0].get("404620_07"), "2026-06-20")
+        
+        # Test Zalora launch date header alias
+        df_zal = pd.DataFrame([
+            {"Article No": "404620_07", "TikTok & Zalora Launch Dates": "2026-07-15", "Ecom_Zalora": "Yes", "rrp_price": "89.99"}
+        ])
+        maps = build_zecom_maps(df_zal, "Zalora SG")
+        self.assertEqual(maps[0].get("404620_07"), "2026-07-15")
+
+    def test_size_chart_check_in_images_fallback(self):
+        from listing_qc_validator.utils.validators import validate_row_internal, build_content_maps
+        
+        content_df = pd.DataFrame([
+            {
+                "SKU": "4069161482557",
+                "Article No": "404620_07",
+                "uk_size": "M",
+                "content_gender": "Men",
+                "content_color_name": "Black",
+                "Size Chart": "http://image.com/my_size_chart.jpg"
+            }
+        ])
+        c_maps = build_content_maps(content_df)
+        
+        row = pd.Series({
+            "sku": "4069161482557",
+            "article_number": "404620_07",
+            "product_name": "Puma Tee Black",
+            "gender": "Men",
+            "size": "M",
+            "quantity": "0",
+            "price": "89.99",
+            "images": "http://image.com/my_size_chart.jpg",
+            "size_chart": ""
+        })
+        
+        excs = validate_row_internal(row, 0, channel="Lazada PH", content_maps=c_maps, zecom_maps=self.zecom_maps_shopee)
+        sc_excs = [e for e in excs if e["Field"] == "Size Chart"]
+        self.assertEqual(len(sc_excs), 0, "Should match size chart in images list and not raise error")
+
 if __name__ == '__main__':
     unittest.main()
