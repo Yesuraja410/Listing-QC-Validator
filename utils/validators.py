@@ -401,7 +401,7 @@ def genders_are_compatible(g1: str, g2: str) -> bool:
 
 # ── Reference Mappings Builders ───────────────────────────────────────────────
 
-def build_content_maps(content_df: pd.DataFrame) -> Tuple[Dict, Dict, Dict, Dict, Dict, Dict, Dict, Dict, Dict]:
+def build_content_maps(content_df: pd.DataFrame) -> Tuple[Dict, Dict, Dict, Dict, Dict, Dict, Dict, Dict, Dict, Dict]:
     """
     Builds lookup tables from Content File for UK, US, Russian size and color name mappings.
     Optimised using vectorised pandas operations for speed.
@@ -412,6 +412,7 @@ def build_content_maps(content_df: pd.DataFrame) -> Tuple[Dict, Dict, Dict, Dict
     sku_to_russize = {}
     sku_to_gender = {}
     sku_to_colorname = {}
+    sku_to_sizechart = {}
     
     article_to_uksizes = {}
     article_to_ussizes = {}
@@ -427,6 +428,7 @@ def build_content_maps(content_df: pd.DataFrame) -> Tuple[Dict, Dict, Dict, Dict
         has_rus = "rus_size" in df_clean.columns
         has_gender = "content_gender" in df_clean.columns
         has_color = "content_color_name" in df_clean.columns
+        has_sc = "Size Chart" in df_clean.columns
         
         if has_sku:
             df_clean["SKU_clean"] = df_clean["SKU"].apply(_clean_sku)
@@ -454,6 +456,8 @@ def build_content_maps(content_df: pd.DataFrame) -> Tuple[Dict, Dict, Dict, Dict
                 sku_to_gender = dict(zip(sku_df["SKU_clean"], sku_df["content_gender"].fillna("").astype(str).str.strip()))
             if has_color:
                 sku_to_colorname = dict(zip(sku_df["SKU_clean"], sku_df["content_color_name"].fillna("").astype(str).str.strip()))
+            if has_sc:
+                sku_to_sizechart = dict(zip(sku_df["SKU_clean"], sku_df["Size Chart"].fillna("").astype(str).str.strip()))
                 
         # Build Article-level sets
         if "Art_clean" in df_clean.columns and not df_clean.empty:
@@ -479,7 +483,7 @@ def build_content_maps(content_df: pd.DataFrame) -> Tuple[Dict, Dict, Dict, Dict
                     
     return (
         sku_to_article, sku_to_uksize, sku_to_ussize, sku_to_russize, sku_to_gender, sku_to_colorname,
-        article_to_uksizes, article_to_ussizes, article_to_russizes
+        sku_to_sizechart, article_to_uksizes, article_to_ussizes, article_to_russizes
     )
 
 
@@ -508,8 +512,30 @@ def build_zecom_maps(zecom_df: pd.DataFrame, channel: str) -> Tuple[Dict, Dict, 
         df_clean = df_clean[df_clean["Art_clean"] != ""]
         
         if not df_clean.empty:
-            if "Launch Date" in df_clean.columns:
-                dates = pd.to_datetime(df_clean["Launch Date"], errors="coerce")
+            # Determine dynamic launch date column header
+            launch_date_col = None
+            chan_low = channel.lower()
+            if "lazada" in chan_low or "shopee" in chan_low:
+                allowed_ld_headers = ["laz & shp launch date", "lazada & shopee launch date"]
+            elif "zalora" in chan_low:
+                allowed_ld_headers = ["zal & tk launch date", "tiktok & zalora launch dates", "zal launch date"]
+            elif "tiktok" in chan_low:
+                allowed_ld_headers = ["zal & tk launch date", "tiktok & zalora launch dates", "tktk launch date"]
+            else:
+                allowed_ld_headers = []
+                
+            allowed_ld_headers.append("launch date")
+            
+            for c in df_clean.columns:
+                c_clean = " ".join(str(c).split()).lower()
+                if c_clean in allowed_ld_headers:
+                    launch_date_col = c
+                    break
+            if not launch_date_col:
+                launch_date_col = next((c for c in df_clean.columns if "launch date" in str(c).lower()), None)
+                
+            if launch_date_col and launch_date_col in df_clean.columns:
+                dates = pd.to_datetime(df_clean[launch_date_col], errors="coerce")
                 formatted_dates = dates.dt.date.astype(str).replace("NaT", "")
                 article_to_launchdate = dict(zip(df_clean["Art_clean"], formatted_dates))
                 
@@ -527,7 +553,7 @@ def validate_row_internal(
     row: pd.Series, 
     idx: int, 
     channel: str,
-    content_maps: Tuple = (None, None, None, None, None, None, None, None),
+    content_maps: Tuple = (None, None, None, None, None, None, None, None, None, None),
     zecom_maps: Tuple = (None, None, None),
     allowed_genders: List[str] = ALLOWED_GENDERS, 
     allowed_statuses: List[str] = ALLOWED_STATUSES,
@@ -551,7 +577,7 @@ def validate_row_internal(
     size = row.get("_corrected_size") if "_corrected_size" in row else correct_size(raw_size)
     
     sku_to_article, sku_to_uksize, sku_to_ussize, sku_to_russize, sku_to_gender, sku_to_colorname, \
-        article_to_uksizes, article_to_ussizes, article_to_russizes = content_maps
+        sku_to_sizechart, article_to_uksizes, article_to_ussizes, article_to_russizes = content_maps
         
     article_to_launchdate, article_to_ecomstatus, article_to_rrpprice = zecom_maps
 
@@ -881,22 +907,41 @@ def validate_row_internal(
         if is_size_chart_exempt(prod_name):
             # Exempt item (Bag, Ball, Gloves) - Size chart is not required
             pass
-        elif is_empty(size_chart_raw):
-            add_exc("Size Chart", size_chart_raw, "Error", "Size Chart attachment is missing.")
         else:
-            size_chart = str(size_chart_raw).strip()
-            if "http" in size_chart.lower() and not URL_REGEX.match(size_chart):
-                add_exc("Size Chart", size_chart, "Warning", "Size Chart link is invalid URL format.")
+            size_chart_to_validate = None
+            if not is_empty(size_chart_raw):
+                size_chart_to_validate = str(size_chart_raw).strip()
+            else:
+                ref_sc = sku_to_sizechart.get(sku_val, "") if sku_to_sizechart and sku_val else ""
+                images_raw = row.get("images", "")
+                img_urls = [u.strip() for u in re.split(r'[,;\n]+', str(images_raw)) if u.strip()]
+                if ref_sc and img_urls:
+                    ref_sc_norm = _normalize_img_url(ref_sc)
+                    for img_url in img_urls:
+                        if _normalize_img_url(img_url) == ref_sc_norm:
+                            size_chart_to_validate = img_url
+                            break
+                    if not size_chart_to_validate:
+                        for img_url in img_urls:
+                            if compare_images_by_url(ref_sc, img_url) == "Matching":
+                                size_chart_to_validate = img_url
+                                break
             
-            if not is_empty(gender):
-                sc_low = size_chart.lower()
-                g_low = gender.lower()
-                if g_low in ["men", "boys"] and any(w in sc_low for w in ["women", "womens", "girl", "girls", "lady"]):
-                    add_exc("Size Chart", size_chart, "Warning", f"Size Chart reference seems to belong to females ('{size_chart}') but product gender is '{gender}'.")
-                elif g_low in ["women", "girls"]:
-                    has_men_only = re.search(r"\bmen\b|\bmens\b|\bboy\b|\bboys\b", sc_low)
-                    if has_men_only:
-                        add_exc("Size Chart", size_chart, "Warning", f"Size Chart reference seems to belong to males ('{size_chart}') but product gender is '{gender}'.")
+            if size_chart_to_validate is None:
+                add_exc("Size Chart", size_chart_raw, "Error", "Size Chart attachment is missing.")
+            else:
+                if "http" in size_chart_to_validate.lower() and not URL_REGEX.match(size_chart_to_validate):
+                    add_exc("Size Chart", size_chart_to_validate, "Warning", "Size Chart link is invalid URL format.")
+                
+                if not is_empty(gender):
+                    sc_low = size_chart_to_validate.lower()
+                    g_low = gender.lower()
+                    if g_low in ["men", "boys"] and any(w in sc_low for w in ["women", "womens", "girl", "girls", "lady"]):
+                        add_exc("Size Chart", size_chart_to_validate, "Warning", f"Size Chart reference seems to belong to females ('{size_chart_to_validate}') but product gender is '{gender}'.")
+                    elif g_low in ["women", "girls"]:
+                        has_men_only = re.search(r"\bmen\b|\bmens\b|\bboy\b|\bboys\b", sc_low)
+                        if has_men_only:
+                            add_exc("Size Chart", size_chart_to_validate, "Warning", f"Size Chart reference seems to belong to males ('{size_chart_to_validate}') but product gender is '{gender}'.")
 
     return exceptions
 
@@ -925,7 +970,7 @@ def validate_row_post(
     row: pd.Series, 
     idx: int, 
     channel: str,
-    content_maps: Tuple = (None, None, None, None, None, None, None, None),
+    content_maps: Tuple = (None, None, None, None, None, None, None, None, None, None),
     zecom_maps: Tuple = (None, None, None),
     check_live_images: bool = False, 
     allowed_genders: List[str] = ALLOWED_GENDERS, 
@@ -1125,7 +1170,7 @@ def validate_dataframe(
         if not is_parent_sku:
             if content_maps:
                 sku_to_article, sku_to_uksize, sku_to_ussize, sku_to_russize, sku_to_gender, sku_to_colorname, \
-                    article_to_uksizes, article_to_ussizes, article_to_russizes = content_maps
+                    sku_to_sizechart, article_to_uksizes, article_to_ussizes, article_to_russizes = content_maps
                 
                 if sku_val in sku_to_colorname:
                     ref_color_val = sku_to_colorname[sku_val]
@@ -1360,8 +1405,29 @@ def compare_source_and_live(
         sc_chk_val = "Not Matching"
         src_sc = src_row.get("size_chart", "") if src_row else ""
         live_sc = live_row.get("size_chart", "") if live_row else ""
-        if src_sc and live_sc:
-            sc_chk_val = compare_images_by_url(src_sc, live_sc)
+        if src_sc:
+            if live_sc:
+                sc_chk_val = compare_images_by_url(src_sc, live_sc)
+            else:
+                # If size chart is not in live_sc, check if it exists in the live images list
+                live_img_str = live_row.get("images", "") if live_row else ""
+                live_img_urls = [u.strip() for u in re.split(r"[,;]", str(live_img_str)) if u.strip()]
+                
+                src_sc_norm = _normalize_img_url(src_sc)
+                url_found = False
+                for u in live_img_urls:
+                    if _normalize_img_url(u) == src_sc_norm:
+                        sc_chk_val = "Matching"
+                        url_found = True
+                        break
+                
+                if not url_found:
+                    for u in live_img_urls:
+                        if compare_images_by_url(src_sc, u) == "Matching":
+                            sc_chk_val = "Matching"
+                            break
+                    else:
+                        sc_chk_val = "Missing"
         elif not src_sc and not live_sc:
             sc_chk_val = "Matching"
         else:
