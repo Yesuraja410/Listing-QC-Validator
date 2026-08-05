@@ -833,13 +833,29 @@ def load_tiktok(active_file, inactive_file):
 def load_content(file):
     if file is None:
         return pd.DataFrame()
-    df = _read_file(file, usecols_keywords=["sku", "ean", "barcode", "upc", "article", "color", "colour", "style", "gender", "sex", "uk", "us", "rus", "size"])
+        
+    if isinstance(file, str):
+        filename = file
+        with open(file, 'rb') as f:
+            raw = f.read()
+    else:
+        filename = getattr(file, "name", "unknown.csv")
+        raw = file.read()
+        file.seek(0)
+        
+    is_csv = filename.lower().endswith(".csv")
+    h_row = detect_header_row(raw, is_csv)
+    
+    if not isinstance(file, str):
+        file.seek(0)
+        
+    df = _read_file(file, header_row=h_row, usecols_keywords=["sku", "ean", "barcode", "upc", "article", "color", "colour", "style", "gender", "sex", "uk", "us", "rus", "size", "image", "chart"])
     if df.empty:
         return pd.DataFrame()
     df = _normalise_cols(df)
     
     # Map SKU / EAN
-    ean_col = next((c for c in df.columns if c.lower() in ["sku as ean", "ean", "sku", "sku_ean"]), None)
+    ean_col = next((c for c in df.columns if c.lower() in ["sku as ean", "ean", "sku", "sku_ean", "seller sku", "sellersku", "seller_sku"]), None)
     if ean_col:
         df = df.rename(columns={ean_col: "SKU"})
     elif "EAN" in df.columns and "SKU" not in df.columns:
@@ -887,8 +903,21 @@ def load_content(file):
                    next((c for c in df.columns if "rus" in c.lower() or "russian" in c.lower()), None))
     df["rus_size"] = df[rus_col].apply(_safe_str) if rus_col else ""
 
+    # Map Images
+    images_col = next((c for c in df.columns if any(k in c.lower() for k in ["product image url(s)", "product image urls", "image urls", "image url", "images", "image"])), None)
+    if images_col:
+        df = df.rename(columns={images_col: "images"})
+        
+    # Map Size Chart
+    size_chart_col = next((c for c in df.columns if "size chart" in c.lower() or "sizechart" in c.lower() or "size chart url" in c.lower() or "size chart image url" in c.lower() or "chart" in c.lower()), None)
+    if size_chart_col:
+        df = df.rename(columns={size_chart_col: "Size Chart"})
+
     if "SKU" in df.columns:
         df["SKU"] = df["SKU"].apply(_clean_sku)
+        placeholders = {"required", "optional", "mandatory", "conditional mandatory", "conditionally required", "graas sku"}
+        df = df[~df["SKU"].str.lower().str.strip().isin(placeholders)]
+        df = df[df["SKU"] != ""]
     if "Article No" in df.columns:
         df["Article No"] = df["Article No"].apply(_safe_str)
         
@@ -1555,7 +1584,7 @@ def detect_header_row(data: bytes, is_csv: bool) -> int:
     
     def is_header_val_likely(val):
         s = str(val).strip()
-        if not s:
+        if not s or len(s) > 45:
             return False
         s_low = s.lower()
         if s_low.startswith(("http://", "https://")):
