@@ -1060,7 +1060,7 @@ def load_zecom(file, country="PH"):
     else:
         df["rrp_price"] = ""
 
-    has_platform_launch = any(any(k in str(col).lower() for k in ["laz & shp", "zal & tk", "tiktok & zalora"]) for col in df.columns)
+    has_platform_launch = any(any(k in " ".join(str(col).lower().split()).replace(" ", "") for k in ["laz&shp", "zal&tk", "tiktok&zalora", "shopee&lazada"]) for col in df.columns)
     if not has_platform_launch:
         launch_col = None
         for c in ["Launch Dates", "Launch Date", "LaunchDate", "Launch"]:
@@ -1102,7 +1102,8 @@ def load_zecom(file, country="PH"):
         
         # First try: platform name + country name
         for col in df.columns:
-            if col in ("Article No", "Launch Date", "Future Launch", "rrp_price"):
+            col_lower = str(col).lower()
+            if col in ("Article No", "Launch Date", "Future Launch", "rrp_price") or "launch" in col_lower or "date" in col_lower:
                 continue
             col_clean = _clean_string(col)
             if mp_key_clean in col_clean and country_clean in col_clean:
@@ -1111,7 +1112,8 @@ def load_zecom(file, country="PH"):
         # Second try: platform name only
         if not target_col:
             for col in df.columns:
-                if col in ("Article No", "Launch Date", "Future Launch", "rrp_price"):
+                col_lower = str(col).lower()
+                if col in ("Article No", "Launch Date", "Future Launch", "rrp_price") or "launch" in col_lower or "date" in col_lower:
                     continue
                 col_clean = _clean_string(col)
                 if mp_key_clean in col_clean:
