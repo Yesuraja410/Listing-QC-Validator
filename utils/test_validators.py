@@ -711,5 +711,85 @@ class TestValidators(unittest.TestCase):
         sc_excs = [e for e in excs if e["Field"] == "Size Chart"]
         self.assertEqual(len(sc_excs), 0, "Should match size chart in images list and not raise error")
 
+    def test_zecom_status_and_launch_date_robustness(self):
+        from listing_qc_validator.utils.file_loaders import load_zecom
+        from listing_qc_validator.utils.validators import build_zecom_maps
+        import io
+        
+        class ExcelMockFile:
+            def __init__(self, df, name):
+                out = io.BytesIO()
+                df.to_excel(out, index=False)
+                out.seek(0)
+                self.buffer = out
+                self.name = name
+            def read(self):
+                return self.buffer.getvalue()
+            def seek(self, pos):
+                self.buffer.seek(pos)
+                
+        # Simulating MY Zecom Tracker structure (spacing differences and launch date names)
+        df_my = pd.DataFrame([
+            {
+                "Style#": "311240_12", 
+                "Tiktok & Zalora Launch Dates": "2024-07-15", 
+                "Shopee & Lazada Launch Dates": "2024-07-31", 
+                "Lazada": "YES", 
+                "Shopee": "NO", 
+                "Zalora MP": "YES", 
+                "MY RRP": 259
+            }
+        ])
+        mock_file = ExcelMockFile(df_my, "MY_zecom.xlsx")
+        df_parsed = load_zecom(mock_file, country="MY")
+        self.assertEqual(df_parsed.loc[0, "Ecom_Lazada"], "Yes")
+        self.assertEqual(df_parsed.loc[0, "Ecom_Shopee"], "No")
+        self.assertEqual(df_parsed.loc[0, "Ecom_Zalora"], "Yes")
+        
+        # Lazada MY Launch Date mapping
+        lm, _, _ = build_zecom_maps(df_parsed, "Lazada MY")
+        self.assertEqual(lm.get("311240_12"), "2024-07-31")
+        
+        # Zalora MY Launch Date mapping
+        zm, _, _ = build_zecom_maps(df_parsed, "Zalora MY")
+        self.assertEqual(zm.get("311240_12"), "2024-07-15")
+
+    def test_tiktok_status_fallback_to_zalora(self):
+        from listing_qc_validator.utils.file_loaders import load_zecom
+        from listing_qc_validator.utils.validators import build_zecom_maps
+        import io
+        
+        class ExcelMockFile:
+            def __init__(self, df, name):
+                out = io.BytesIO()
+                df.to_excel(out, index=False)
+                out.seek(0)
+                self.buffer = out
+                self.name = name
+            def read(self):
+                return self.buffer.getvalue()
+            def seek(self, pos):
+                self.buffer.seek(pos)
+                
+        # PH Tracker has no TikTok column, but has ZALORA
+        df_ph = pd.DataFrame([
+            {
+                "PIM Article#": "376710_01",
+                "LAZADA": "YES",
+                "SHOPEE": "YES",
+                "LAZ & SHP Launch Date": "2019-01-01",
+                "ZALORA": "YES",
+                "ZAL & TK\nLaunch Date": "2019-01-01",
+                "PH EC RRP": 6400
+            }
+        ])
+        mock_file = ExcelMockFile(df_ph, "PH_zecom.xlsx")
+        df_parsed = load_zecom(mock_file, country="PH")
+        self.assertNotIn("Ecom_TikTok", df_parsed.columns)
+        
+        # TikTok status should fallback to Zalora status ("Yes")
+        _, sm, _ = build_zecom_maps(df_parsed, "TikTok PH")
+        self.assertEqual(sm.get("376710_01"), "Yes")
+
 if __name__ == '__main__':
     unittest.main()
