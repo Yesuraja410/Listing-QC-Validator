@@ -1283,6 +1283,14 @@ def parse_live_lazada(df: pd.DataFrame) -> pd.DataFrame:
     color_col = next((c for c in df_data.columns if c.lower() in ["color", "colour", "color name", "color_name"]), None)
     size_col = next((c for c in df_data.columns if c.lower() in ["size", "size_name", "size name"]), None)
     
+    # Dynamic size chart column detection by cell content check
+    sc_col = next((c for c in df_data.columns if "size" in c.lower() and "chart" in c.lower()), None)
+    if not sc_col:
+        for col in df_data.columns:
+            if df_data[col].astype(str).str.lower().str.strip().isin(["size chart", "sizechart"]).any():
+                sc_col = col
+                break
+                
     img_cols = []
     for i in range(1, 9):
         col = next((c for c in df_data.columns if c.lower().replace(" ", "").replace("_", "") in [f"images{i}", f"image{i}"]), None)
@@ -1290,7 +1298,9 @@ def parse_live_lazada(df: pd.DataFrame) -> pd.DataFrame:
             img_cols.append(col)
     if not img_cols:
         img_cols = [c for c in df_data.columns if "image" in c.lower() and not "chart" in c.lower()]
-    sc_col = next((c for c in df_data.columns if "size" in c.lower() and "chart" in c.lower()), None)
+        
+    if sc_col and sc_col in img_cols:
+        img_cols.remove(sc_col)
     
     records = []
     for _, row in df_data.iterrows():
@@ -1312,7 +1322,10 @@ def parse_live_lazada(df: pd.DataFrame) -> pd.DataFrame:
             
         imgs = [str(row[c]).strip() for c in img_cols if pd.notna(row.get(c)) and str(row[c]).strip() not in ("", "nan", "None")]
         imgs_str = ",".join(imgs)
-        sc_val = _safe_str(row.get(sc_col)) if sc_col else ""
+        
+        # If sc_col cell contains "size chart" instruction string, treat the URL value as empty
+        cell_sc = _safe_str(row.get(sc_col)) if sc_col else ""
+        sc_val = cell_sc if cell_sc.lower().strip() not in ("size chart", "sizechart") else ""
         
         records.append({
             "sku": sku_val,
@@ -1349,8 +1362,17 @@ def parse_live_shopee(df: pd.DataFrame) -> pd.DataFrame:
     color_col = next((c for c in df_data.columns if c.lower() in ["color", "colour", "color name", "color_name"]), None)
     size_col = next((c for c in df_data.columns if c.lower() in ["size", "size_name", "size name"]), None)
     
-    img_cols = [c for c in df_data.columns if "image" in c.lower() and "chart" not in c.lower()]
+    # Dynamic size chart column detection by cell content check
     sc_col = next((c for c in df_data.columns if "chart" in c.lower()), None)
+    if not sc_col:
+        for col in df_data.columns:
+            if df_data[col].astype(str).str.lower().str.strip().isin(["size chart", "sizechart"]).any():
+                sc_col = col
+                break
+                
+    img_cols = [c for c in df_data.columns if "image" in c.lower() and "chart" not in c.lower()]
+    if sc_col and sc_col in img_cols:
+        img_cols.remove(sc_col)
     
     records = []
     for _, row in df_data.iterrows():
@@ -1380,7 +1402,10 @@ def parse_live_shopee(df: pd.DataFrame) -> pd.DataFrame:
             
         imgs = [str(row[c]).strip() for c in img_cols if pd.notna(row.get(c)) and str(row[c]).strip() not in ("", "nan", "None")]
         imgs_str = ",".join(imgs)
-        sc_val = _safe_str(row.get(sc_col)) if sc_col else ""
+        
+        # If sc_col cell contains "size chart" instruction string, treat the URL value as empty
+        cell_sc = _safe_str(row.get(sc_col)) if sc_col else ""
+        sc_val = cell_sc if cell_sc.lower().strip() not in ("size chart", "sizechart") else ""
         
         records.append({
             "sku": sku_val,
@@ -1416,8 +1441,17 @@ def parse_live_tiktok(df: pd.DataFrame) -> pd.DataFrame:
     color_col = next((c for c in df_data.columns if c.lower() in ["primary variation value (option)", "color", "colour"]), None)
     size_col = next((c for c in df_data.columns if c.lower() in ["secondary variation value (option)", "size"]), None)
     
-    img_cols = [c for c in df_data.columns if any(k in c.lower() for k in ["main image", "image"]) and not "chart" in c.lower()]
+    # Dynamic size chart column detection by cell content check
     sc_col = next((c for c in df_data.columns if "size chart" in c.lower()), None)
+    if not sc_col:
+        for col in df_data.columns:
+            if df_data[col].astype(str).str.lower().str.strip().isin(["size chart", "sizechart"]).any():
+                sc_col = col
+                break
+                
+    img_cols = [c for c in df_data.columns if any(k in c.lower() for k in ["main image", "image"]) and not "chart" in c.lower()]
+    if sc_col and sc_col in img_cols:
+        img_cols.remove(sc_col)
     
     records = []
     for _, row in df_data.iterrows():
@@ -1444,7 +1478,10 @@ def parse_live_tiktok(df: pd.DataFrame) -> pd.DataFrame:
             
         imgs = [str(row[c]).strip() for c in img_cols if pd.notna(row.get(c)) and str(row[c]).strip() not in ("", "nan", "None")]
         imgs_str = ",".join(imgs)
-        sc_val = _safe_str(row.get(sc_col)) if sc_col else ""
+        
+        # If sc_col cell contains "size chart" instruction string, treat the URL value as empty
+        cell_sc = _safe_str(row.get(sc_col)) if sc_col else ""
+        sc_val = cell_sc if cell_sc.lower().strip() not in ("size chart", "sizechart") else ""
         
         records.append({
             "sku": sku_val,
@@ -1470,8 +1507,18 @@ def parse_live_zalora(df: pd.DataFrame) -> pd.DataFrame:
         sku_col = next((c for c in df_data.columns if c.lower() in ["sku", "variation sku", "seller sku"]), None)
         
     name_col = next((c for c in df_data.columns if c.lower() in ["product name", "name", "product_name"]), None)
-    img_cols = [c for c in df_data.columns if "image" in c.lower() and not "chart" in c.lower()]
+    
+    # Dynamic size chart column detection by cell content check
     sc_col = next((c for c in df_data.columns if "size chart" in c.lower() or "sizechart" in c.lower()), None)
+    if not sc_col:
+        for col in df_data.columns:
+            if df_data[col].astype(str).str.lower().str.strip().isin(["size chart", "sizechart"]).any():
+                sc_col = col
+                break
+                
+    img_cols = [c for c in df_data.columns if "image" in c.lower() and not "chart" in c.lower()]
+    if sc_col and sc_col in img_cols:
+        img_cols.remove(sc_col)
     
     records = []
     for _, row in df_data.iterrows():
@@ -1486,7 +1533,10 @@ def parse_live_zalora(df: pd.DataFrame) -> pd.DataFrame:
         name_val = _safe_str(row.get(name_col)) if name_col else ""
         imgs = [str(row[c]).strip() for c in img_cols if pd.notna(row.get(c)) and str(row[c]).strip() not in ("", "nan", "None")]
         imgs_str = ",".join(imgs)
-        sc_val = _safe_str(row.get(sc_col)) if sc_col else ""
+        
+        # If sc_col cell contains "size chart" instruction string, treat the URL value as empty
+        cell_sc = _safe_str(row.get(sc_col)) if sc_col else ""
+        sc_val = cell_sc if cell_sc.lower().strip() not in ("size chart", "sizechart") else ""
         
         for sku_val in skus:
             clean_s = _clean_sku(sku_val)
