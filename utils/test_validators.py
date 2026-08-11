@@ -791,5 +791,31 @@ class TestValidators(unittest.TestCase):
         _, sm, _ = build_zecom_maps(df_parsed, "TikTok PH")
         self.assertEqual(sm.get("376710_01"), "Yes")
 
+    def test_dynamic_size_chart_by_content(self):
+        from listing_qc_validator.utils.file_loaders import parse_live_lazada
+        
+        # Mock Lazada sheet where Images3 contains "Size chart" indicator in a helper row
+        df_laz = pd.DataFrame([
+            {
+                "SellerSKU": "SKU123",
+                "Product Name": "Test Shoe",
+                "Images1": "http://img.com/prod1.jpg",
+                "Images2": "http://img.com/prod2.jpg",
+                "Images3": "http://img.com/sc.jpg"
+            },
+            {
+                "SellerSKU": None,
+                "Product Name": None,
+                "Images1": None,
+                "Images2": None,
+                "Images3": "Size chart"
+            }
+        ])
+        parsed = parse_live_lazada(df_laz)
+        self.assertEqual(len(parsed), 1)
+        row = parsed.iloc[0]
+        self.assertEqual(row["size_chart"], "http://img.com/sc.jpg")
+        self.assertEqual(row["images"], "http://img.com/prod1.jpg,http://img.com/prod2.jpg")
+
 if __name__ == '__main__':
     unittest.main()
