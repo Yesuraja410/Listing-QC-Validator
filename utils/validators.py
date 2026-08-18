@@ -3,17 +3,51 @@ import datetime
 import pandas as pd
 import numpy as np
 import requests
+from requests.adapters import HTTPAdapter
+try:
+    from urllib3.util.retry import Retry
+except ImportError:
+    from requests.packages.urllib3.util.retry import Retry
 from typing import Dict, List, Tuple
 import urllib.request
 import io
-from PIL import Image
+from PIL import Image, ImageFile
 import colorsys
 import threading
 import concurrent.futures
 
+# Allow PIL to work with slightly truncated/streamed image data instead of raising
+ImageFile.LOAD_TRUNCATED_IMAGES = True
+
 _IMAGE_HASH_CACHE = {}
 _IMAGE_COLOR_CACHE = {}
 _CACHE_LOCK = threading.Lock()
+
+# ── Shared HTTP session for all image downloads ──────────────────────────────
+# Re-using one pooled session (instead of opening a fresh urllib connection per
+# image) is the single biggest speed win for Post QC image/size-chart checks,
+# since a listing sheet can easily contain several thousand unique image URLs.
+_HTTP_SESSION = None
+_SESSION_LOCK = threading.Lock()
+
+def _get_http_session(pool_size: int = 64) -> requests.Session:
+    global _HTTP_SESSION
+    with _SESSION_LOCK:
+        if _HTTP_SESSION is None:
+            s = requests.Session()
+            retry = Retry(total=1, backoff_factor=0, status_forcelist=[502, 503, 504])
+            adapter = HTTPAdapter(pool_connections=pool_size, pool_maxsize=pool_size, max_retries=retry)
+            s.mount("http://", adapter)
+            s.mount("https://", adapter)
+            s.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+            _HTTP_SESSION = s
+        return _HTTP_SESSION
+
+# Cap how many bytes we'll pull per image - we only need enough to build an
+# 8x8 perceptual hash + dominant colors, so a full-resolution 5-10MB product
+# photo is massively overkill. This alone cuts download time dramatically on
+# large hero images.
+_MAX_IMAGE_BYTES = 1_500_000  # 1.5 MB is plenty for hashing/color purposes
 
 COLOR_KEYWORDS = {
     "black": ["black", "blk", "dark", "noir", "schwarz"],
@@ -155,50 +189,80 @@ def _normalize_img_url(url):
         u = u.split("?")[0]
     return u.rstrip("/").lower()
 
-def download_and_hash_image(url):
+def download_and_hash_image(url, timeout: Tuple[float, float] = (3.05, 4)):
     url = str(url).strip()
     if not url:
         return None, "Empty URL"
-        
+
     with _CACHE_LOCK:
         if url in _IMAGE_HASH_CACHE:
             return _IMAGE_HASH_CACHE[url]
-        
+
     try:
-        req = urllib.request.Request(
-            url, 
-            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-        )
-        with urllib.request.urlopen(req, timeout=5) as response:
-            data = response.read()
-            
-        img = Image.open(io.BytesIO(data)).convert('L').resize((8, 8), Image.Resampling.LANCZOS)
+        session = _get_http_session()
+        resp = session.get(url, timeout=timeout, stream=True)
+        resp.raise_for_status()
+
+        chunks = []
+        total = 0
+        for chunk in resp.iter_content(chunk_size=65536):
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if total >= _MAX_IMAGE_BYTES:
+                break
+        resp.close()
+        data = b"".join(chunks)
+
+        img_raw = Image.open(io.BytesIO(data))
+        # draft() lets libjpeg decode directly at a much lower resolution,
+        # which is far cheaper than decoding full-res then resizing down.
+        try:
+            img_raw.draft("L", (8, 8))
+        except Exception:
+            pass
+        img = img_raw.convert('L').resize((8, 8), Image.Resampling.LANCZOS)
         pixels = list(img.getdata())
         avg = sum(pixels) / 64
         ahash = "".join("1" if p > avg else "0" for p in pixels)
-        
+
         color_shares = analyze_image_dominant_colors(data)
         res = (ahash, None)
     except Exception as e:
         color_shares = {}
         res = (None, str(e))
-        
+
     with _CACHE_LOCK:
         _IMAGE_HASH_CACHE[url] = res
         _IMAGE_COLOR_CACHE[url] = color_shares
     return res
 
-def pre_hash_image_urls(urls: List[str], max_workers: int = 30):
+def pre_hash_image_urls(urls: List[str], max_workers: int = 64, progress_callback=None):
+    """
+    Downloads + hashes every unique URL concurrently. Pass `progress_callback(done, total)`
+    to drive a UI progress bar (e.g. Streamlit) instead of blocking silently.
+    """
     unique_urls = list(set(str(u).strip() for u in urls if str(u).strip()))
-    
+
     with _CACHE_LOCK:
         urls_to_download = [u for u in unique_urls if u not in _IMAGE_HASH_CACHE]
-        
-    if not urls_to_download:
+
+    total = len(urls_to_download)
+    if total == 0:
+        if progress_callback:
+            progress_callback(0, 0)
         return
-        
+
+    done = 0
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        executor.map(download_and_hash_image, urls_to_download)
+        futures = [executor.submit(download_and_hash_image, u) for u in urls_to_download]
+        for f in concurrent.futures.as_completed(futures):
+            f.result()
+            done += 1
+            if progress_callback and (done % 10 == 0 or done == total):
+                progress_callback(done, total)
 
 def compare_images_by_url(url1, url2):
     u1 = str(url1).strip()
@@ -1274,6 +1338,8 @@ def compare_source_and_live(
     match_column: str = "sku",
     content_df: pd.DataFrame = None,
     zecom_df: pd.DataFrame = None,
+    fast_mode: bool = False,
+    progress_callback=None,
     channel: str = None
 ) -> Tuple[pd.DataFrame, Dict]:
     """
@@ -1322,22 +1388,27 @@ def compare_source_and_live(
     src_dict = src_clean.set_index(key_col).to_dict('index')
     live_dict = live_clean.set_index(key_col).to_dict('index')
     
-    # Pre-hash all unique image and size chart URLs concurrently to maximize speed
+    # Pre-hash all unique image and size chart URLs concurrently to maximize speed.
+    # In fast_mode we only need the primary (first) image per listing, which cuts
+    # the number of downloads by up to ~8x on channels like Lazada that carry
+    # Images1-8, at the cost of not catching mismatches in secondary photos.
+    def _collect_urls(r):
+        out = []
+        if "images" in r and r["images"]:
+            imgs = [u.strip() for u in re.split(r"[,;]", str(r["images"])) if u.strip()]
+            out.extend(imgs[:1] if fast_mode else imgs)
+        if "size_chart" in r and r["size_chart"]:
+            out.append(str(r["size_chart"]).strip())
+        return out
+
     urls_to_hash = []
     for r in src_dict.values():
-        if "images" in r and r["images"]:
-            urls_to_hash.extend([u.strip() for u in re.split(r"[,;]", str(r["images"])) if u.strip()])
-        if "size_chart" in r and r["size_chart"]:
-            urls_to_hash.append(str(r["size_chart"]).strip())
-            
+        urls_to_hash.extend(_collect_urls(r))
     for r in live_dict.values():
-        if "images" in r and r["images"]:
-            urls_to_hash.extend([u.strip() for u in re.split(r"[,;]", str(r["images"])) if u.strip()])
-        if "size_chart" in r and r["size_chart"]:
-            urls_to_hash.append(str(r["size_chart"]).strip())
-            
+        urls_to_hash.extend(_collect_urls(r))
+
     if urls_to_hash:
-        pre_hash_image_urls(urls_to_hash)
+        pre_hash_image_urls(urls_to_hash, progress_callback=progress_callback)
         
     # Run 9 checks on live listings first
     live_val_dict = {}
@@ -1416,7 +1487,7 @@ def compare_source_and_live(
         src_img = src_row.get("images", "") if src_row else ""
         live_img = live_row.get("images", "") if live_row else ""
         if src_img and live_img:
-            if is_shopee:
+            if is_shopee or fast_mode:
                 src_imgs = [img.strip() for img in re.split(r"[,;]", str(src_img)) if img.strip()]
                 live_imgs = [img.strip() for img in re.split(r"[,;]", str(live_img)) if img.strip()]
                 s_img = src_imgs[0] if src_imgs else ""
