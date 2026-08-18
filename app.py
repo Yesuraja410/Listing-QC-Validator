@@ -52,7 +52,7 @@ def cached_load_content(file_bytes, file_name):
     return load_content(BytesFile(file_bytes, file_name))
 
 @st.cache_data(max_entries=2)
-def cached_load_zecom(file_bytes, file_name, country):
+def cached_load_zecom(file_bytes, file_name, country, channel=None, status_col_letter=None, launch_col_letter=None):
     from utils.file_loaders import load_zecom
     class BytesFile:
         def __init__(self, b, n):
@@ -62,7 +62,10 @@ def cached_load_zecom(file_bytes, file_name, country):
             return self.bytes
         def seek(self, pos):
             pass
-    return load_zecom(BytesFile(file_bytes, file_name), country)
+    return load_zecom(
+        BytesFile(file_bytes, file_name), country,
+        channel=channel, status_col_letter=status_col_letter, launch_col_letter=launch_col_letter
+    )
 
 @st.cache_data(max_entries=2)
 def cached_process_live_files(live_files_data, channel):
@@ -186,6 +189,26 @@ with st.sidebar:
         type=["xlsx", "xls", "csv"],
         key="ref_zecom"
     )
+
+    with st.expander("⚙️ Manual zEcom Column Override (optional)"):
+        st.caption(
+            "Tracker headers keep shifting? Point directly at the Excel column "
+            "letter instead of relying on auto-detection. Leave blank to auto-detect as before."
+        )
+        zecom_status_col_letter = st.text_input(
+            "Ecom Status Column (e.g. Y)",
+            value="",
+            placeholder="Y",
+            key="zecom_status_letter",
+            help=f"Column holding the Active/Inactive status for the currently selected channel ({channel})."
+        ).strip()
+        zecom_launch_col_letter = st.text_input(
+            "Launch Date Column (e.g. AA)",
+            value="",
+            placeholder="AA",
+            key="zecom_launch_letter",
+            help="Column holding the Launch Date used for the future-launch check."
+        ).strip()
     
     # 3. Post QC Channel Marketplace Files
     live_files = []
@@ -449,7 +472,12 @@ if target_loaded:
             with st.spinner("Loading references and running validations..."):
                 try:
                     content_df = cached_load_content(content_file.getvalue(), content_file.name)
-                    zecom_df = cached_load_zecom(zecom_file.getvalue(), zecom_file.name, country)
+                    zecom_df = cached_load_zecom(
+                        zecom_file.getvalue(), zecom_file.name, country,
+                        channel=channel,
+                        status_col_letter=zecom_status_col_letter or None,
+                        launch_col_letter=zecom_launch_col_letter or None
+                    )
                     
                     all_standardized = []
                     for fn, df in upload_dfs.items():
