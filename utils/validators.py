@@ -566,7 +566,9 @@ def build_zecom_maps(zecom_df: pd.DataFrame, channel: str) -> Tuple[Dict, Dict, 
             ecom_col = "Ecom_TikTok" if "Ecom_TikTok" in zecom_df.columns else "Ecom_Zalora"
         else:
             ecom_col = f"Ecom_{platform.capitalize()}"
-        
+
+        manual_launch_override = bool(getattr(zecom_df, "attrs", {}).get("manual_launch_override"))
+
         df_clean = zecom_df.copy()
         if "Article No" in df_clean.columns:
             df_clean["Art_clean"] = df_clean["Article No"].apply(_normalise_article_no)
@@ -578,58 +580,63 @@ def build_zecom_maps(zecom_df: pd.DataFrame, channel: str) -> Tuple[Dict, Dict, 
         if not df_clean.empty:
             # Determine dynamic launch date column header
             launch_date_col = None
-            chan_low = channel.lower()
-            if "lazada" in chan_low or "shopee" in chan_low:
-                allowed_ld_headers = [
-                    "laz & shp launch date", 
-                    "laz &shp launch date", 
-                    "lazada & shopee launch date", 
-                    "lazada & shopee launch dates",
-                    "shopee & lazada launch date", 
-                    "shopee & lazada launch dates",
-                    "lazada and shopee launch date", 
-                    "shopee and lazada launch date"
-                ]
-            elif "zalora" in chan_low:
-                allowed_ld_headers = [
-                    "zal & tk launch date", 
-                    "zal & tk launch dates", 
-                    "tiktok & zalora launch dates", 
-                    "tiktok & zalora launch date", 
-                    "zalora & tiktok launch date",
-                    "zal launch date", 
-                    "zalora launch date"
-                ]
-            elif "tiktok" in chan_low:
-                allowed_ld_headers = [
-                    "zal & tk launch date", 
-                    "zal & tk launch dates", 
-                    "tiktok & zalora launch dates", 
-                    "tiktok & zalora launch date", 
-                    "tktk launch date", 
-                    "tiktok launch date"
-                ]
+            if manual_launch_override and "Launch Date" in df_clean.columns:
+                # A manually-picked column (by Excel letter) always wins - skip
+                # all header-name guessing below.
+                launch_date_col = "Launch Date"
             else:
-                allowed_ld_headers = []
-                
-            allowed_ld_headers.append("launch date")
-            
-            for c in df_clean.columns:
-                c_clean = " ".join(str(c).lower().split())
-                if c_clean in allowed_ld_headers:
-                    launch_date_col = c
-                    break
-                    
-            if not launch_date_col:
+                chan_low = channel.lower()
                 if "lazada" in chan_low or "shopee" in chan_low:
-                    launch_date_col = next((c for c in df_clean.columns if any(k in str(c).lower() for k in ["laz", "shp", "shopee", "lazada"]) and "launch" in str(c).lower()), None)
+                    allowed_ld_headers = [
+                        "laz & shp launch date", 
+                        "laz &shp launch date", 
+                        "lazada & shopee launch date", 
+                        "lazada & shopee launch dates",
+                        "shopee & lazada launch date", 
+                        "shopee & lazada launch dates",
+                        "lazada and shopee launch date", 
+                        "shopee and lazada launch date"
+                    ]
                 elif "zalora" in chan_low:
-                    launch_date_col = next((c for c in df_clean.columns if any(k in str(c).lower() for k in ["zal", "zalora"]) and "launch" in str(c).lower()), None)
+                    allowed_ld_headers = [
+                        "zal & tk launch date", 
+                        "zal & tk launch dates", 
+                        "tiktok & zalora launch dates", 
+                        "tiktok & zalora launch date", 
+                        "zalora & tiktok launch date",
+                        "zal launch date", 
+                        "zalora launch date"
+                    ]
                 elif "tiktok" in chan_low:
-                    launch_date_col = next((c for c in df_clean.columns if any(k in str(c).lower() for k in ["tk", "tiktok"]) and "launch" in str(c).lower()), None)
+                    allowed_ld_headers = [
+                        "zal & tk launch date", 
+                        "zal & tk launch dates", 
+                        "tiktok & zalora launch dates", 
+                        "tiktok & zalora launch date", 
+                        "tktk launch date", 
+                        "tiktok launch date"
+                    ]
+                else:
+                    allowed_ld_headers = []
                     
-            if not launch_date_col:
-                launch_date_col = next((c for c in df_clean.columns if "launch" in str(c).lower()), None)
+                allowed_ld_headers.append("launch date")
+                
+                for c in df_clean.columns:
+                    c_clean = " ".join(str(c).lower().split())
+                    if c_clean in allowed_ld_headers:
+                        launch_date_col = c
+                        break
+                        
+                if not launch_date_col:
+                    if "lazada" in chan_low or "shopee" in chan_low:
+                        launch_date_col = next((c for c in df_clean.columns if any(k in str(c).lower() for k in ["laz", "shp", "shopee", "lazada"]) and "launch" in str(c).lower()), None)
+                    elif "zalora" in chan_low:
+                        launch_date_col = next((c for c in df_clean.columns if any(k in str(c).lower() for k in ["zal", "zalora"]) and "launch" in str(c).lower()), None)
+                    elif "tiktok" in chan_low:
+                        launch_date_col = next((c for c in df_clean.columns if any(k in str(c).lower() for k in ["tk", "tiktok"]) and "launch" in str(c).lower()), None)
+                        
+                if not launch_date_col:
+                    launch_date_col = next((c for c in df_clean.columns if "launch" in str(c).lower()), None)
                 
             if launch_date_col and launch_date_col in df_clean.columns:
                 dates = pd.to_datetime(df_clean[launch_date_col], errors="coerce")
