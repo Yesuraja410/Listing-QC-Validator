@@ -288,6 +288,13 @@ with st.sidebar:
         custom_statuses = [s.strip().lower() for s in custom_statuses_str.split(",") if s.strip()]
         
         check_live_images = st.checkbox("Live HTTP Image Check", value=False)
+        fast_image_mode = st.checkbox(
+            "⚡ Fast Image Compare (primary image only)",
+            value=True,
+            help="Compares only the first/primary image per SKU instead of all Images1-8. "
+                 "Cuts image download volume by up to ~8x on Lazada-style sheets. "
+                 "Turn off for a full all-image audit (slower, more thorough)."
+        )
 
 # ── Main Content Area ────────────────────────────────────────────────────────
 # ── Setup Checklist Dashboard ────────────────────────────────────────────────
@@ -798,40 +805,55 @@ if target_loaded:
                     st.info("💡 Please upload Live marketplace files (Excel, CSV, or ZIP) in the sidebar to run the sync audit.")
                 else:
                     if st.button("🔄 Execute Comparison Audit", type="primary", key="btn_run_compare"):
-                        with st.spinner("Consolidating live reports and running comparison..."):
-                            try:
-                                consolidated_live = process_live_files(live_files, channel)
-                                if consolidated_live.empty:
-                                    st.error("Could not parse any valid listing data from the uploaded live files. Please verify the headers and formats.")
-                                else:
-                                    st.success(f"✅ Successfully loaded and consolidated {len(consolidated_live)} live listing variants.")
-                                    
-                                    standardized_source = val_df.copy()
-                                    
-                                    # Get reference files if available in session/variables
-                                    content_df_ref = None
-                                    zecom_df_ref = None
-                                    if content_file:
-                                        content_df_ref = content_df
-                                    if zecom_file:
-                                        zecom_df_ref = zecom_df
-                                        
-                                    comp_df, comp_metrics = compare_source_and_live(
-                                        standardized_source,
-                                        consolidated_live,
-                                        match_column="sku",
-                                        content_df=content_df_ref,
-                                        zecom_df=zecom_df_ref,
-                                        channel=channel
-                                    )
-                                    
-                                    st.session_state.comp_df = comp_df
-                                    st.session_state.comp_metrics = comp_metrics
-                                    st.session_state.ran_comparison = True
-                            except Exception as e:
-                                st.error(f"Comparison run failed: {e}")
-                                import traceback
-                                st.error(traceback.format_exc())
+                        try:
+                            with st.spinner("Consolidating live reports..."):
+                                # Use the cached parser (keyed on file bytes) instead of
+                                # re-parsing the raw uploads on every rerun - this alone
+                                # avoids redundant Excel/CSV parsing on large files.
+                                live_files_data = [(lf.getvalue(), lf.name) for lf in live_files]
+                                consolidated_live = cached_process_live_files(live_files_data, channel)
+
+                            if consolidated_live.empty:
+                                st.error("Could not parse any valid listing data from the uploaded live files. Please verify the headers and formats.")
+                            else:
+                                st.success(f"✅ Successfully loaded and consolidated {len(consolidated_live)} live listing variants.")
+
+                                standardized_source = val_df.copy()
+
+                                # Get reference files if available in session/variables
+                                content_df_ref = None
+                                zecom_df_ref = None
+                                if content_file:
+                                    content_df_ref = content_df
+                                if zecom_file:
+                                    zecom_df_ref = zecom_df
+
+                                progress_bar = st.progress(0.0, text="Downloading & hashing images for comparison...")
+
+                                def _update_progress(done, total):
+                                    if total:
+                                        pct = min(done / total, 1.0)
+                                        progress_bar.progress(pct, text=f"Downloading & hashing images... {done}/{total}")
+
+                                comp_df, comp_metrics = compare_source_and_live(
+                                    standardized_source,
+                                    consolidated_live,
+                                    match_column="sku",
+                                    content_df=content_df_ref,
+                                    zecom_df=zecom_df_ref,
+                                    channel=channel,
+                                    fast_mode=fast_image_mode,
+                                    progress_callback=_update_progress
+                                )
+                                progress_bar.empty()
+
+                                st.session_state.comp_df = comp_df
+                                st.session_state.comp_metrics = comp_metrics
+                                st.session_state.ran_comparison = True
+                        except Exception as e:
+                            st.error(f"Comparison run failed: {e}")
+                            import traceback
+                            st.error(traceback.format_exc())
                                 
                     if st.session_state.ran_comparison:
                         st.markdown("---")
