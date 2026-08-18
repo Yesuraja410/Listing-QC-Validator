@@ -4,6 +4,23 @@ import zipfile
 import urllib.parse
 import pandas as pd
 import numpy as np
+from typing import List, Tuple
+
+def excel_col_to_index(col_letters) -> int:
+    """
+    Converts an Excel-style column letter (A, B, ..., Z, AA, AB, ...) to a
+    0-based column index. Returns -1 if the input is blank/invalid so callers
+    can safely no-op on bad input.
+    """
+    if col_letters is None:
+        return -1
+    s = str(col_letters).strip().upper()
+    if not s or not re.fullmatch(r"[A-Z]+", s):
+        return -1
+    idx = 0
+    for ch in s:
+        idx = idx * 26 + (ord(ch) - ord('A') + 1)
+    return idx - 1
 
 # Synonyms for auto-mapping columns
 COLUMN_SYNONYMS = {
@@ -924,7 +941,7 @@ def load_content(file):
     return df
 
 # ── zEcom Loader (extracts launch dates, ecom statuses, and RRP Price)
-def load_zecom(file, country="PH"):
+def load_zecom(file, country="PH", channel=None, status_col_letter=None, launch_col_letter=None):
     if file is None:
         return pd.DataFrame()
     raw = file.read()
@@ -1031,7 +1048,18 @@ def load_zecom(file, country="PH"):
     df.columns = [_safe_str(x) for x in raw_df.iloc[header_idx]]
     df = df.loc[:, ~df.columns.duplicated()].copy()
     df = df.reset_index(drop=True)
-    
+
+    # ── Capture manual column overrides (by Excel letter) BEFORE any row
+    # filtering below, so they stay positionally aligned with df's rows. ──
+    launch_idx = excel_col_to_index(launch_col_letter)
+    status_idx = excel_col_to_index(status_col_letter)
+    if launch_idx >= 0 or status_idx >= 0:
+        raw_data_rows = raw_df.iloc[header_idx + 1:].reset_index(drop=True)
+        if launch_idx >= 0 and launch_idx < raw_data_rows.shape[1]:
+            df["_manual_launch_raw"] = raw_data_rows.iloc[:, launch_idx].values
+        if status_idx >= 0 and status_idx < raw_data_rows.shape[1]:
+            df["_manual_status_raw"] = raw_data_rows.iloc[:, status_idx].values
+
     first_col = df.columns[0]
     df = df[df[first_col].apply(_safe_str) != first_col].copy()
     df = df.reset_index(drop=True)
@@ -1061,7 +1089,11 @@ def load_zecom(file, country="PH"):
         df["rrp_price"] = ""
 
     has_platform_launch = any(any(k in " ".join(str(col).lower().split()).replace(" ", "") for k in ["laz&shp", "zal&tk", "tiktok&zalora", "shopee&lazada"]) for col in df.columns)
-    if not has_platform_launch:
+    if "_manual_launch_raw" in df.columns:
+        # Manual override wins outright - skip all header-name guessing.
+        df["Launch Date"] = df["_manual_launch_raw"]
+        df.attrs["manual_launch_override"] = True
+    elif not has_platform_launch:
         launch_col = None
         for c in ["Launch Dates", "Launch Date", "LaunchDate", "Launch"]:
             if c in df.columns:
@@ -1126,7 +1158,19 @@ def load_zecom(file, country="PH"):
                 ),
                 axis=1,
             )
-            
+
+    # Manual Ecom Status override for the currently selected channel's platform
+    # wins over whatever the auto-detector above picked.
+    if "_manual_status_raw" in df.columns and channel:
+        platform = channel.split()[0].lower()
+        ecom_name = "Ecom_TikTok" if platform == "tiktok" else f"Ecom_{platform.capitalize()}"
+        df[ecom_name] = df.apply(
+            lambda row: _ecom_status_from_val(row["_manual_status_raw"], row.get("Future Launch", False)),
+            axis=1,
+        )
+        df.attrs["manual_status_override"] = True
+        df.attrs["manual_status_platform"] = ecom_name
+
     return df
 
 # ── Auto column mapping functions ─────────────────────────────────────────────
@@ -1264,6 +1308,25 @@ def _clean_live_df_skipping(df: pd.DataFrame, sku_col: str, platform: str) -> pd
             return df.iloc[3:].reset_index(drop=True)
     return df
 
+def _split_images_and_sizechart(imgs: List[str], explicit_sc: str = "") -> Tuple[List[str], str]:
+    """
+    Live marketplace reports (Lazada/Shopee/TikTok) don't carry a dedicated
+    'Size Chart' column - the size chart is simply uploaded as one of the
+    Images1-8 slots, and it always ends up as the LAST populated image slot
+    for that row (any unused slots after it are blank).
+
+    If an explicit size-chart column/value was found some other way, that
+    takes priority. Otherwise, when there are 2+ populated image slots, the
+    last one is treated as the size chart and excluded from the product
+    image list.
+    """
+    explicit_sc = (explicit_sc or "").strip()
+    if explicit_sc:
+        return imgs, explicit_sc
+    if len(imgs) >= 2:
+        return imgs[:-1], imgs[-1]
+    return imgs, ""
+
 def parse_live_lazada(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame()
@@ -1320,12 +1383,14 @@ def parse_live_lazada(df: pd.DataFrame) -> pd.DataFrame:
             color_val = _safe_str(row.get(color_col)) if color_col else ""
             size_val = _safe_str(row.get(size_col)) if size_col else ""
             
-        imgs = [str(row[c]).strip() for c in img_cols if pd.notna(row.get(c)) and str(row[c]).strip() not in ("", "nan", "None")]
-        imgs_str = ",".join(imgs)
+        imgs_raw = [str(row[c]).strip() for c in img_cols if pd.notna(row.get(c)) and str(row[c]).strip() not in ("", "nan", "None")]
         
         # If sc_col cell contains "size chart" instruction string, treat the URL value as empty
         cell_sc = _safe_str(row.get(sc_col)) if sc_col else ""
-        sc_val = cell_sc if cell_sc.lower().strip() not in ("size chart", "sizechart") else ""
+        explicit_sc = cell_sc if cell_sc.lower().strip() not in ("size chart", "sizechart") else ""
+        
+        imgs, sc_val = _split_images_and_sizechart(imgs_raw, explicit_sc)
+        imgs_str = ",".join(imgs)
         
         records.append({
             "sku": sku_val,
@@ -1400,12 +1465,14 @@ def parse_live_shopee(df: pd.DataFrame) -> pd.DataFrame:
             color_val = _safe_str(row.get(color_col)) if color_col else ""
             size_val = _safe_str(row.get(size_col)) if size_col else ""
             
-        imgs = [str(row[c]).strip() for c in img_cols if pd.notna(row.get(c)) and str(row[c]).strip() not in ("", "nan", "None")]
-        imgs_str = ",".join(imgs)
+        imgs_raw = [str(row[c]).strip() for c in img_cols if pd.notna(row.get(c)) and str(row[c]).strip() not in ("", "nan", "None")]
         
         # If sc_col cell contains "size chart" instruction string, treat the URL value as empty
         cell_sc = _safe_str(row.get(sc_col)) if sc_col else ""
-        sc_val = cell_sc if cell_sc.lower().strip() not in ("size chart", "sizechart") else ""
+        explicit_sc = cell_sc if cell_sc.lower().strip() not in ("size chart", "sizechart") else ""
+        
+        imgs, sc_val = _split_images_and_sizechart(imgs_raw, explicit_sc)
+        imgs_str = ",".join(imgs)
         
         records.append({
             "sku": sku_val,
@@ -1476,12 +1543,14 @@ def parse_live_tiktok(df: pd.DataFrame) -> pd.DataFrame:
             color_val = _safe_str(row.get(color_col)) if color_col else ""
             size_val = _safe_str(row.get(size_col)) if size_col else ""
             
-        imgs = [str(row[c]).strip() for c in img_cols if pd.notna(row.get(c)) and str(row[c]).strip() not in ("", "nan", "None")]
-        imgs_str = ",".join(imgs)
+        imgs_raw = [str(row[c]).strip() for c in img_cols if pd.notna(row.get(c)) and str(row[c]).strip() not in ("", "nan", "None")]
         
         # If sc_col cell contains "size chart" instruction string, treat the URL value as empty
         cell_sc = _safe_str(row.get(sc_col)) if sc_col else ""
-        sc_val = cell_sc if cell_sc.lower().strip() not in ("size chart", "sizechart") else ""
+        explicit_sc = cell_sc if cell_sc.lower().strip() not in ("size chart", "sizechart") else ""
+        
+        imgs, sc_val = _split_images_and_sizechart(imgs_raw, explicit_sc)
+        imgs_str = ",".join(imgs)
         
         records.append({
             "sku": sku_val,
@@ -1531,12 +1600,14 @@ def parse_live_zalora(df: pd.DataFrame) -> pd.DataFrame:
             continue
             
         name_val = _safe_str(row.get(name_col)) if name_col else ""
-        imgs = [str(row[c]).strip() for c in img_cols if pd.notna(row.get(c)) and str(row[c]).strip() not in ("", "nan", "None")]
-        imgs_str = ",".join(imgs)
+        imgs_raw = [str(row[c]).strip() for c in img_cols if pd.notna(row.get(c)) and str(row[c]).strip() not in ("", "nan", "None")]
         
         # If sc_col cell contains "size chart" instruction string, treat the URL value as empty
         cell_sc = _safe_str(row.get(sc_col)) if sc_col else ""
-        sc_val = cell_sc if cell_sc.lower().strip() not in ("size chart", "sizechart") else ""
+        explicit_sc = cell_sc if cell_sc.lower().strip() not in ("size chart", "sizechart") else ""
+        
+        imgs, sc_val = _split_images_and_sizechart(imgs_raw, explicit_sc)
+        imgs_str = ",".join(imgs)
         
         for sku_val in skus:
             clean_s = _clean_sku(sku_val)
