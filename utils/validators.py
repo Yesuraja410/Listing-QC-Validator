@@ -595,7 +595,9 @@ def build_zecom_maps(zecom_df: pd.DataFrame, channel: str) -> Tuple[Dict, Dict, 
                         "shopee & lazada launch date", 
                         "shopee & lazada launch dates",
                         "lazada and shopee launch date", 
-                        "shopee and lazada launch date"
+                        "shopee and lazada launch date",
+                        "laz_&shp_launch_date",
+                        "laz_&_shp_launch_date"
                     ]
                 elif "zalora" in chan_low:
                     allowed_ld_headers = [
@@ -605,7 +607,8 @@ def build_zecom_maps(zecom_df: pd.DataFrame, channel: str) -> Tuple[Dict, Dict, 
                         "tiktok & zalora launch date", 
                         "zalora & tiktok launch date",
                         "zal launch date", 
-                        "zalora launch date"
+                        "zalora launch date",
+                        "zal_launch_date"
                     ]
                 elif "tiktok" in chan_low:
                     allowed_ld_headers = [
@@ -614,16 +617,25 @@ def build_zecom_maps(zecom_df: pd.DataFrame, channel: str) -> Tuple[Dict, Dict, 
                         "tiktok & zalora launch dates", 
                         "tiktok & zalora launch date", 
                         "tktk launch date", 
-                        "tiktok launch date"
+                        "tiktok launch date",
+                        "tktk_launch_date"
                     ]
                 else:
                     allowed_ld_headers = []
                     
                 allowed_ld_headers.append("launch date")
                 
+                # Also match header variants that use underscores instead of
+                # spaces (e.g. "LAZ_&SHP_Launch_Date") by comparing a
+                # normalised form (spaces/underscores both collapsed).
+                def _norm_header(s):
+                    return re.sub(r'[\s_]+', ' ', str(s).lower()).strip()
+                allowed_ld_headers_norm = [_norm_header(h) for h in allowed_ld_headers]
+                
                 for c in df_clean.columns:
                     c_clean = " ".join(str(c).lower().split())
-                    if c_clean in allowed_ld_headers:
+                    c_norm = _norm_header(c)
+                    if c_clean in allowed_ld_headers or c_norm in allowed_ld_headers_norm:
                         launch_date_col = c
                         break
                         
