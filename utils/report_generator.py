@@ -22,6 +22,7 @@ def generate_qc_excel_report(val_df: pd.DataFrame, exc_df: pd.DataFrame, qc_stag
     # Ensure all target columns exist in clean_val_df
     target_headers = {
         "sku": "Seller SKU",
+        "product_id": "Product ID",
         "article_number": "Article No",
         "Zeocm Status": "Zeocm Status",
         "launch_date": "Launch Date",
