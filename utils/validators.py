@@ -3,51 +3,17 @@ import datetime
 import pandas as pd
 import numpy as np
 import requests
-from requests.adapters import HTTPAdapter
-try:
-    from urllib3.util.retry import Retry
-except ImportError:
-    from requests.packages.urllib3.util.retry import Retry
 from typing import Dict, List, Tuple
 import urllib.request
 import io
-from PIL import Image, ImageFile
+from PIL import Image
 import colorsys
 import threading
 import concurrent.futures
 
-# Allow PIL to work with slightly truncated/streamed image data instead of raising
-ImageFile.LOAD_TRUNCATED_IMAGES = True
-
 _IMAGE_HASH_CACHE = {}
 _IMAGE_COLOR_CACHE = {}
 _CACHE_LOCK = threading.Lock()
-
-# ── Shared HTTP session for all image downloads ──────────────────────────────
-# Re-using one pooled session (instead of opening a fresh urllib connection per
-# image) is the single biggest speed win for Post QC image/size-chart checks,
-# since a listing sheet can easily contain several thousand unique image URLs.
-_HTTP_SESSION = None
-_SESSION_LOCK = threading.Lock()
-
-def _get_http_session(pool_size: int = 64) -> requests.Session:
-    global _HTTP_SESSION
-    with _SESSION_LOCK:
-        if _HTTP_SESSION is None:
-            s = requests.Session()
-            retry = Retry(total=1, backoff_factor=0, status_forcelist=[502, 503, 504])
-            adapter = HTTPAdapter(pool_connections=pool_size, pool_maxsize=pool_size, max_retries=retry)
-            s.mount("http://", adapter)
-            s.mount("https://", adapter)
-            s.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
-            _HTTP_SESSION = s
-        return _HTTP_SESSION
-
-# Cap how many bytes we'll pull per image - we only need enough to build an
-# 8x8 perceptual hash + dominant colors, so a full-resolution 5-10MB product
-# photo is massively overkill. This alone cuts download time dramatically on
-# large hero images.
-_MAX_IMAGE_BYTES = 1_500_000  # 1.5 MB is plenty for hashing/color purposes
 
 COLOR_KEYWORDS = {
     "black": ["black", "blk", "dark", "noir", "schwarz"],
@@ -189,80 +155,50 @@ def _normalize_img_url(url):
         u = u.split("?")[0]
     return u.rstrip("/").lower()
 
-def download_and_hash_image(url, timeout: Tuple[float, float] = (3.05, 4)):
+def download_and_hash_image(url):
     url = str(url).strip()
     if not url:
         return None, "Empty URL"
-
+        
     with _CACHE_LOCK:
         if url in _IMAGE_HASH_CACHE:
             return _IMAGE_HASH_CACHE[url]
-
+        
     try:
-        session = _get_http_session()
-        resp = session.get(url, timeout=timeout, stream=True)
-        resp.raise_for_status()
-
-        chunks = []
-        total = 0
-        for chunk in resp.iter_content(chunk_size=65536):
-            if not chunk:
-                break
-            chunks.append(chunk)
-            total += len(chunk)
-            if total >= _MAX_IMAGE_BYTES:
-                break
-        resp.close()
-        data = b"".join(chunks)
-
-        img_raw = Image.open(io.BytesIO(data))
-        # draft() lets libjpeg decode directly at a much lower resolution,
-        # which is far cheaper than decoding full-res then resizing down.
-        try:
-            img_raw.draft("L", (8, 8))
-        except Exception:
-            pass
-        img = img_raw.convert('L').resize((8, 8), Image.Resampling.LANCZOS)
+        req = urllib.request.Request(
+            url, 
+            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+        )
+        with urllib.request.urlopen(req, timeout=5) as response:
+            data = response.read()
+            
+        img = Image.open(io.BytesIO(data)).convert('L').resize((8, 8), Image.Resampling.LANCZOS)
         pixels = list(img.getdata())
         avg = sum(pixels) / 64
         ahash = "".join("1" if p > avg else "0" for p in pixels)
-
+        
         color_shares = analyze_image_dominant_colors(data)
         res = (ahash, None)
     except Exception as e:
         color_shares = {}
         res = (None, str(e))
-
+        
     with _CACHE_LOCK:
         _IMAGE_HASH_CACHE[url] = res
         _IMAGE_COLOR_CACHE[url] = color_shares
     return res
 
-def pre_hash_image_urls(urls: List[str], max_workers: int = 64, progress_callback=None):
-    """
-    Downloads + hashes every unique URL concurrently. Pass `progress_callback(done, total)`
-    to drive a UI progress bar (e.g. Streamlit) instead of blocking silently.
-    """
+def pre_hash_image_urls(urls: List[str], max_workers: int = 30):
     unique_urls = list(set(str(u).strip() for u in urls if str(u).strip()))
-
+    
     with _CACHE_LOCK:
         urls_to_download = [u for u in unique_urls if u not in _IMAGE_HASH_CACHE]
-
-    total = len(urls_to_download)
-    if total == 0:
-        if progress_callback:
-            progress_callback(0, 0)
+        
+    if not urls_to_download:
         return
-
-    done = 0
-
+        
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = [executor.submit(download_and_hash_image, u) for u in urls_to_download]
-        for f in concurrent.futures.as_completed(futures):
-            f.result()
-            done += 1
-            if progress_callback and (done % 10 == 0 or done == total):
-                progress_callback(done, total)
+        executor.map(download_and_hash_image, urls_to_download)
 
 def compare_images_by_url(url1, url2):
     u1 = str(url1).strip()
@@ -566,9 +502,7 @@ def build_zecom_maps(zecom_df: pd.DataFrame, channel: str) -> Tuple[Dict, Dict, 
             ecom_col = "Ecom_TikTok" if "Ecom_TikTok" in zecom_df.columns else "Ecom_Zalora"
         else:
             ecom_col = f"Ecom_{platform.capitalize()}"
-
-        manual_launch_override = bool(getattr(zecom_df, "attrs", {}).get("manual_launch_override"))
-
+        
         df_clean = zecom_df.copy()
         if "Article No" in df_clean.columns:
             df_clean["Art_clean"] = df_clean["Article No"].apply(_normalise_article_no)
@@ -580,75 +514,58 @@ def build_zecom_maps(zecom_df: pd.DataFrame, channel: str) -> Tuple[Dict, Dict, 
         if not df_clean.empty:
             # Determine dynamic launch date column header
             launch_date_col = None
-            if manual_launch_override and "Launch Date" in df_clean.columns:
-                # A manually-picked column (by Excel letter) always wins - skip
-                # all header-name guessing below.
-                launch_date_col = "Launch Date"
+            chan_low = channel.lower()
+            if "lazada" in chan_low or "shopee" in chan_low:
+                allowed_ld_headers = [
+                    "laz & shp launch date", 
+                    "laz &shp launch date", 
+                    "lazada & shopee launch date", 
+                    "lazada & shopee launch dates",
+                    "shopee & lazada launch date", 
+                    "shopee & lazada launch dates",
+                    "lazada and shopee launch date", 
+                    "shopee and lazada launch date"
+                ]
+            elif "zalora" in chan_low:
+                allowed_ld_headers = [
+                    "zal & tk launch date", 
+                    "zal & tk launch dates", 
+                    "tiktok & zalora launch dates", 
+                    "tiktok & zalora launch date", 
+                    "zalora & tiktok launch date",
+                    "zal launch date", 
+                    "zalora launch date"
+                ]
+            elif "tiktok" in chan_low:
+                allowed_ld_headers = [
+                    "zal & tk launch date", 
+                    "zal & tk launch dates", 
+                    "tiktok & zalora launch dates", 
+                    "tiktok & zalora launch date", 
+                    "tktk launch date", 
+                    "tiktok launch date"
+                ]
             else:
-                chan_low = channel.lower()
-                if "lazada" in chan_low or "shopee" in chan_low:
-                    allowed_ld_headers = [
-                        "laz & shp launch date", 
-                        "laz &shp launch date", 
-                        "lazada & shopee launch date", 
-                        "lazada & shopee launch dates",
-                        "shopee & lazada launch date", 
-                        "shopee & lazada launch dates",
-                        "lazada and shopee launch date", 
-                        "shopee and lazada launch date",
-                        "laz_&shp_launch_date",
-                        "laz_&_shp_launch_date"
-                    ]
-                elif "zalora" in chan_low:
-                    allowed_ld_headers = [
-                        "zal & tk launch date", 
-                        "zal & tk launch dates", 
-                        "tiktok & zalora launch dates", 
-                        "tiktok & zalora launch date", 
-                        "zalora & tiktok launch date",
-                        "zal launch date", 
-                        "zalora launch date",
-                        "zal_launch_date"
-                    ]
-                elif "tiktok" in chan_low:
-                    allowed_ld_headers = [
-                        "zal & tk launch date", 
-                        "zal & tk launch dates", 
-                        "tiktok & zalora launch dates", 
-                        "tiktok & zalora launch date", 
-                        "tktk launch date", 
-                        "tiktok launch date",
-                        "tktk_launch_date"
-                    ]
-                else:
-                    allowed_ld_headers = []
+                allowed_ld_headers = []
+                
+            allowed_ld_headers.append("launch date")
+            
+            for c in df_clean.columns:
+                c_clean = " ".join(str(c).lower().split())
+                if c_clean in allowed_ld_headers:
+                    launch_date_col = c
+                    break
                     
-                allowed_ld_headers.append("launch date")
-                
-                # Also match header variants that use underscores instead of
-                # spaces (e.g. "LAZ_&SHP_Launch_Date") by comparing a
-                # normalised form (spaces/underscores both collapsed).
-                def _norm_header(s):
-                    return re.sub(r'[\s_]+', ' ', str(s).lower()).strip()
-                allowed_ld_headers_norm = [_norm_header(h) for h in allowed_ld_headers]
-                
-                for c in df_clean.columns:
-                    c_clean = " ".join(str(c).lower().split())
-                    c_norm = _norm_header(c)
-                    if c_clean in allowed_ld_headers or c_norm in allowed_ld_headers_norm:
-                        launch_date_col = c
-                        break
-                        
-                if not launch_date_col:
-                    if "lazada" in chan_low or "shopee" in chan_low:
-                        launch_date_col = next((c for c in df_clean.columns if any(k in str(c).lower() for k in ["laz", "shp", "shopee", "lazada"]) and "launch" in str(c).lower()), None)
-                    elif "zalora" in chan_low:
-                        launch_date_col = next((c for c in df_clean.columns if any(k in str(c).lower() for k in ["zal", "zalora"]) and "launch" in str(c).lower()), None)
-                    elif "tiktok" in chan_low:
-                        launch_date_col = next((c for c in df_clean.columns if any(k in str(c).lower() for k in ["tk", "tiktok"]) and "launch" in str(c).lower()), None)
-                        
-                if not launch_date_col:
-                    launch_date_col = next((c for c in df_clean.columns if "launch" in str(c).lower()), None)
+            if not launch_date_col:
+                if "lazada" in chan_low or "shopee" in chan_low:
+                    launch_date_col = next((c for c in df_clean.columns if any(k in str(c).lower() for k in ["laz", "shp", "shopee", "lazada"]) and "launch" in str(c).lower()), None)
+                elif "zalora" in chan_low:
+                    launch_date_col = next((c for c in df_clean.columns if any(k in str(c).lower() for k in ["zal", "zalora"]) and "launch" in str(c).lower()), None)
+                elif "tiktok" in chan_low:
+                    launch_date_col = next((c for c in df_clean.columns if any(k in str(c).lower() for k in ["tk", "tiktok"]) and "launch" in str(c).lower()), None)
+                    
+            if not launch_date_col:
+                launch_date_col = next((c for c in df_clean.columns if "launch" in str(c).lower()), None)
                 
             if launch_date_col and launch_date_col in df_clean.columns:
                 dates = pd.to_datetime(df_clean[launch_date_col], errors="coerce")
@@ -1357,8 +1274,6 @@ def compare_source_and_live(
     match_column: str = "sku",
     content_df: pd.DataFrame = None,
     zecom_df: pd.DataFrame = None,
-    fast_mode: bool = False,
-    progress_callback=None,
     channel: str = None
 ) -> Tuple[pd.DataFrame, Dict]:
     """
@@ -1391,8 +1306,22 @@ def compare_source_and_live(
         live_clean[match_col] = live_clean[match_col].astype(str).str.strip().apply(_clean_sku)
         live_clean = live_clean[live_clean[match_col] != ""]
         
-    composite_match = ("size" in src_clean.columns and "size" in live_clean.columns) and (match_col != "product_id")
-    if composite_match:
+    if is_shopee_or_tiktok and match_col == "product_id":
+        if "color_name" in src_clean.columns and "color_name" in live_clean.columns:
+            if "size" in src_clean.columns and "size" in live_clean.columns:
+                src_clean["_match_key"] = src_clean["product_id"] + " | " + src_clean["color_name"].astype(str).str.strip().str.lower() + " | " + src_clean["size"].astype(str).str.strip().apply(correct_size).str.lower()
+                live_clean["_match_key"] = live_clean["product_id"] + " | " + live_clean["color_name"].astype(str).str.strip().str.lower() + " | " + live_clean["size"].astype(str).str.strip().apply(correct_size).str.lower()
+            else:
+                src_clean["_match_key"] = src_clean["product_id"] + " | " + src_clean["color_name"].astype(str).str.strip().str.lower()
+                live_clean["_match_key"] = live_clean["product_id"] + " | " + live_clean["color_name"].astype(str).str.strip().str.lower()
+            key_col = "_match_key"
+        elif "size" in src_clean.columns and "size" in live_clean.columns:
+            src_clean["_match_key"] = src_clean["product_id"] + " | " + src_clean["size"].astype(str).str.strip().apply(correct_size).str.lower()
+            live_clean["_match_key"] = live_clean["product_id"] + " | " + live_clean["size"].astype(str).str.strip().apply(correct_size).str.lower()
+            key_col = "_match_key"
+        else:
+            key_col = "product_id"
+    elif "size" in src_clean.columns and "size" in live_clean.columns:
         src_clean["_match_key"] = src_clean[match_col] + " | " + src_clean["size"].astype(str).str.strip().apply(correct_size).str.lower()
         live_clean["_match_key"] = live_clean[match_col] + " | " + live_clean["size"].astype(str).str.strip().apply(correct_size).str.lower()
         key_col = "_match_key"
@@ -1407,27 +1336,22 @@ def compare_source_and_live(
     src_dict = src_clean.set_index(key_col).to_dict('index')
     live_dict = live_clean.set_index(key_col).to_dict('index')
     
-    # Pre-hash all unique image and size chart URLs concurrently to maximize speed.
-    # In fast_mode we only need the primary (first) image per listing, which cuts
-    # the number of downloads by up to ~8x on channels like Lazada that carry
-    # Images1-8, at the cost of not catching mismatches in secondary photos.
-    def _collect_urls(r):
-        out = []
-        if "images" in r and r["images"]:
-            imgs = [u.strip() for u in re.split(r"[,;]", str(r["images"])) if u.strip()]
-            out.extend(imgs[:1] if fast_mode else imgs)
-        if "size_chart" in r and r["size_chart"]:
-            out.append(str(r["size_chart"]).strip())
-        return out
-
+    # Pre-hash all unique image and size chart URLs concurrently to maximize speed
     urls_to_hash = []
     for r in src_dict.values():
-        urls_to_hash.extend(_collect_urls(r))
+        if "images" in r and r["images"]:
+            urls_to_hash.extend([u.strip() for u in re.split(r"[,;]", str(r["images"])) if u.strip()])
+        if "size_chart" in r and r["size_chart"]:
+            urls_to_hash.append(str(r["size_chart"]).strip())
+            
     for r in live_dict.values():
-        urls_to_hash.extend(_collect_urls(r))
-
+        if "images" in r and r["images"]:
+            urls_to_hash.extend([u.strip() for u in re.split(r"[,;]", str(r["images"])) if u.strip()])
+        if "size_chart" in r and r["size_chart"]:
+            urls_to_hash.append(str(r["size_chart"]).strip())
+            
     if urls_to_hash:
-        pre_hash_image_urls(urls_to_hash, progress_callback=progress_callback)
+        pre_hash_image_urls(urls_to_hash)
         
     # Run 9 checks on live listings first
     live_val_dict = {}
@@ -1460,15 +1384,7 @@ def compare_source_and_live(
             is_live_report=True
         )
         
-        if composite_match:
-            live_val_df["_match_key"] = live_val_df["sku"].astype(str).str.strip().apply(_clean_sku) + " | " + live_val_df["size"].astype(str).str.strip().apply(correct_size).str.lower()
-        else:
-            if is_shopee and "product_id" in live_val_df.columns and "color_name" in live_val_df.columns:
-                live_val_df["_match_key"] = live_val_df["product_id"].astype(str).str.strip() + " | " + live_val_df["color_name"].astype(str).str.strip().str.lower()
-            elif match_col == "product_id":
-                live_val_df["_match_key"] = live_val_df["product_id"].astype(str).str.strip()
-            else:
-                live_val_df["_match_key"] = live_val_df["sku"].astype(str).str.strip().apply(_clean_sku)
+        live_val_df["_match_key"] = live_clean[key_col].values
         live_val_dict = live_val_df.drop_duplicates(subset=["_match_key"]).set_index("_match_key").to_dict('index')
         
     all_keys = set(src_dict.keys()).union(set(live_dict.keys()))
@@ -1506,7 +1422,7 @@ def compare_source_and_live(
         src_img = src_row.get("images", "") if src_row else ""
         live_img = live_row.get("images", "") if live_row else ""
         if src_img and live_img:
-            if is_shopee or fast_mode:
+            if is_shopee:
                 src_imgs = [img.strip() for img in re.split(r"[,;]", str(src_img)) if img.strip()]
                 live_imgs = [img.strip() for img in re.split(r"[,;]", str(live_img)) if img.strip()]
                 s_img = src_imgs[0] if src_imgs else ""
