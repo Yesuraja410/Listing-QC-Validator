@@ -512,9 +512,25 @@ if target_loaded:
                             if not clean_s:
                                 clean_s = prod_id_val
                                 
-                            # 1. Fetch Article No from Content File
-                            ref_art = sku_to_article.get(clean_s, "")
-                            
+                            # 1. Fetch Article No from row, Content File, live_row or direct matching
+                            ref_art = str(row.get("article_number", "")).strip()
+                            if not ref_art:
+                                ref_art = sku_to_article.get(clean_s, "")
+                            if not ref_art:
+                                ref_art = str(row.get("parent_sku", "")).strip()
+                            if not ref_art and live_row:
+                                ref_art = str(live_row.get("parent_sku", "")).strip()
+                            if not ref_art and live_row:
+                                ref_art = str(live_row.get("article_number", "")).strip()
+                            if not ref_art and live_row:
+                                l_sku = _clean_sku(live_row.get("sku", ""))
+                                if l_sku:
+                                    ref_art = sku_to_article.get(l_sku, "")
+                            if not ref_art:
+                                norm_s = _normalise_article_no(clean_s)
+                                if norm_s in article_to_launchdate or norm_s in article_to_ecomstatus:
+                                    ref_art = norm_s
+                                    
                             # 2. Fetch market place ecom status and Launch date from Zecom File
                             norm_art = _normalise_article_no(ref_art)
                             ref_ld = article_to_launchdate.get(norm_art, "")
@@ -540,32 +556,55 @@ if target_loaded:
                                     live_row = live_sku_dict.get(clean_s, {})
                                 if not live_row and prod_id_val:
                                     live_row = live_pid_dict.get(prod_id_val, {})
+                                    
+                            # If ref_art was empty, re-check using live_row data
+                            if not ref_art and live_row:
+                                ref_art = str(live_row.get("parent_sku", "")).strip()
+                                if not ref_art:
+                                    ref_art = str(live_row.get("article_number", "")).strip()
+                                if not ref_art:
+                                    l_sku = _clean_sku(live_row.get("sku", ""))
+                                    if l_sku:
+                                        ref_art = sku_to_article.get(l_sku, "")
+                                if ref_art:
+                                    norm_art = _normalise_article_no(ref_art)
+                                    ref_ld = article_to_launchdate.get(norm_art, "")
                             
                             # Standardize gender: from content file gender
-                            gender_val = sku_to_gender.get(clean_s, "")
+                            gender_val = str(row.get("gender", "")).strip()
+                            if not gender_val and clean_s:
+                                gender_val = sku_to_gender.get(clean_s, "")
+                            if not gender_val and live_row:
+                                l_sku = _clean_sku(live_row.get("sku", ""))
+                                if l_sku:
+                                    gender_val = sku_to_gender.get(l_sku, "")
                             
                             if live_row:
                                 ecommerce_status = live_row.get("ecommerce_status", "Active")
                                 if is_empty(ecommerce_status):
                                     ecommerce_status = "Active"
-                                product_name = live_row.get("product_name", "")
-                                color_name = live_row.get("color_name", "")
-                                size = live_row.get("size", "")
+                                product_name = live_row.get("product_name", "") or str(row.get("product_name", "")).strip()
+                                color_name = live_row.get("color_name", "") or str(row.get("color_name", "")).strip()
+                                size = live_row.get("size", "") or str(row.get("size", "")).strip()
                                 price = live_row.get("price", "0.0")
+                                if is_empty(price) or str(price).strip() == "0.0":
+                                    price = str(row.get("price", "0.0")).strip()
                                 quantity = live_row.get("quantity", "0")
-                                images = live_row.get("images", "")
-                                size_chart = live_row.get("size_chart", "")
+                                if is_empty(quantity):
+                                    quantity = str(row.get("quantity", "0")).strip()
+                                images = live_row.get("images", "") or str(row.get("images", "")).strip()
+                                size_chart = live_row.get("size_chart", "") or str(row.get("size_chart", "")).strip()
                                 source_file = live_row.get("_source_file", "Live Report")
                                 row_num = live_row.get("_original_row_number", idx + 2)
                             else:
                                 ecommerce_status = "Missing in Live"
-                                product_name = ""
-                                color_name = ""
-                                size = ""
-                                price = "0.0"
-                                quantity = "0"
-                                images = ""
-                                size_chart = ""
+                                product_name = str(row.get("product_name", "")).strip()
+                                color_name = str(row.get("color_name", "")).strip()
+                                size = str(row.get("size", "")).strip()
+                                price = str(row.get("price", "0.0")).strip()
+                                quantity = str(row.get("quantity", "0")).strip()
+                                images = str(row.get("images", "")).strip()
+                                size_chart = str(row.get("size_chart", "")).strip()
                                 source_file = row.get("_source_file", "Upload Sheet")
                                 row_num = row.get("_original_row_number", idx + 2)
                                 
