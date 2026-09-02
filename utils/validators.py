@@ -1172,11 +1172,9 @@ def validate_dataframe(
         
         # zEcom Status lookup
         ref_ecom_status = "Not Found"
-        if is_parent_sku:
-            ref_ecom_status = "" # Not fetched (blank) for Parent SKUs
-        elif zecom_maps:
+        if zecom_maps and norm_art:
             article_to_launchdate, article_to_ecomstatus, article_to_rrpprice = zecom_maps
-            if article_to_ecomstatus and norm_art:
+            if article_to_ecomstatus:
                 ref_ecom_status = article_to_ecomstatus.get(norm_art, "Not Found")
         zecom_status_col.append(ref_ecom_status)
         
@@ -1219,42 +1217,41 @@ def validate_dataframe(
         ref_size_val = ""
         ref_rrp_val = ""
         
-        if not is_parent_sku:
-            if content_maps:
-                sku_to_article, sku_to_uksize, sku_to_ussize, sku_to_russize, sku_to_gender, sku_to_colorname, \
-                    sku_to_sizechart, article_to_uksizes, article_to_ussizes, article_to_russizes = content_maps
+        if content_maps:
+            sku_to_article, sku_to_uksize, sku_to_ussize, sku_to_russize, sku_to_gender, sku_to_colorname, \
+                sku_to_sizechart, article_to_uksizes, article_to_ussizes, article_to_russizes = content_maps
+            
+            if sku_val in sku_to_colorname:
+                ref_color_val = sku_to_colorname[sku_val]
                 
-                if sku_val in sku_to_colorname:
-                    ref_color_val = sku_to_colorname[sku_val]
-                    
-                if sku_val in sku_to_article:
-                    if channel == "Lazada PH" and is_footwear(row.get("product_name", "")):
-                        ref_size_val = sku_to_ussize.get(sku_val, "")
-                    elif channel in ["Zalora SG", "Zalora MY", "Zalora PH"] and is_kids_apparel(row.get("gender", ""), row.get("product_name", "")):
-                        ref_size_val = sku_to_russize.get(sku_val, "")
-                    else:
-                        ref_size_val = sku_to_uksize.get(sku_val, "")
-                    
-                    if not ref_size_val:
-                        ref_size_val = sku_to_uksize.get(sku_val, "")
+            if sku_val in sku_to_article:
+                if channel == "Lazada PH" and is_footwear(row.get("product_name", "")):
+                    ref_size_val = sku_to_ussize.get(sku_val, "")
+                elif channel in ["Zalora SG", "Zalora MY", "Zalora PH"] and is_kids_apparel(row.get("gender", ""), row.get("product_name", "")):
+                    ref_size_val = sku_to_russize.get(sku_val, "")
                 else:
-                    if norm_art:
-                        valid_sizes = set()
-                        if channel == "Lazada PH" and is_footwear(row.get("product_name", "")):
-                            valid_sizes = article_to_ussizes.get(norm_art, set())
-                        elif channel in ["Zalora SG", "Zalora MY", "Zalora PH"] and is_kids_apparel(row.get("gender", ""), row.get("product_name", "")):
-                            valid_sizes = article_to_russizes.get(norm_art, set())
-                        else:
-                            valid_sizes = article_to_uksizes.get(norm_art, set())
-                        if not valid_sizes:
-                            valid_sizes = article_to_uksizes.get(norm_art, set())
-                        if valid_sizes:
-                            ref_size_val = ", ".join(sorted(list(valid_sizes)))
-                            
-            if zecom_maps and norm_art:
-                _, _, article_to_rrpprice = zecom_maps
-                if article_to_rrpprice and norm_art in article_to_rrpprice:
-                    ref_rrp_val = article_to_rrpprice[norm_art]
+                    ref_size_val = sku_to_uksize.get(sku_val, "")
+                
+                if not ref_size_val:
+                    ref_size_val = sku_to_uksize.get(sku_val, "")
+            else:
+                if norm_art:
+                    valid_sizes = set()
+                    if channel == "Lazada PH" and is_footwear(row.get("product_name", "")):
+                        valid_sizes = article_to_ussizes.get(norm_art, set())
+                    elif channel in ["Zalora SG", "Zalora MY", "Zalora PH"] and is_kids_apparel(row.get("gender", ""), row.get("product_name", "")):
+                        valid_sizes = article_to_russizes.get(norm_art, set())
+                    else:
+                        valid_sizes = article_to_uksizes.get(norm_art, set())
+                    if not valid_sizes:
+                        valid_sizes = article_to_uksizes.get(norm_art, set())
+                    if valid_sizes:
+                        ref_size_val = ", ".join(sorted(list(valid_sizes)))
+                        
+        if zecom_maps and norm_art:
+            _, _, article_to_rrpprice = zecom_maps
+            if article_to_rrpprice and norm_art in article_to_rrpprice:
+                ref_rrp_val = article_to_rrpprice[norm_art]
                     
         ref_color_name_col.append(ref_color_val)
         ref_size_col.append(ref_size_val)
