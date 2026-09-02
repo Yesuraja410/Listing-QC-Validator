@@ -817,5 +817,88 @@ class TestValidators(unittest.TestCase):
         self.assertEqual(row["size_chart"], "http://img.com/sc.jpg")
         self.assertEqual(row["images"], "http://img.com/prod1.jpg,http://img.com/prod2.jpg")
 
+    def test_shopee_media_and_sales_consolidation(self):
+        from listing_qc_validator.utils.file_loaders import parse_live_shopee, process_live_files
+        import io, zipfile
+        
+        # 1. Mock Media Info Sheet
+        df_media = pd.DataFrame([
+            {
+                "Product ID": "12345",
+                "Parent SKU": "PARENT_01",
+                "Product Name": "Test Shirt",
+                "Cover image": "https://img.com/cover.jpg",
+                "Item Image 1": "https://img.com/item1.jpg",
+                "Size Chart Image": "https://img.com/sc.jpg",
+                "Option 1 Name": "Red",
+                "Option 1 Image": "https://img.com/red.jpg",
+                "Option 2 Name": "Blue",
+                "Option 2 Image": "https://img.com/blue.jpg"
+            }
+        ])
+        
+        # 2. Mock Sales Info Sheet
+        df_sales = pd.DataFrame([
+            {
+                "Product ID": "12345",
+                "Product Name": "Test Shirt",
+                "Variation Name": "Red,M",
+                "SKU": "SKU_RED_M",
+                "Price": "500",
+                "Stock": "10"
+            },
+            {
+                "Product ID": "12345",
+                "Product Name": "Test Shirt",
+                "Variation Name": "Blue,L",
+                "SKU": "SKU_BLUE_L",
+                "Price": "500",
+                "Stock": "20"
+            }
+        ])
+        
+        parsed_m = parse_live_shopee(df_media)
+        parsed_s = parse_live_shopee(df_sales)
+        
+        # Test individual parsers
+        self.assertEqual(len(parsed_m), 2)
+        self.assertEqual(len(parsed_s), 2)
+        
+        # Test consolidation
+        class MockFile:
+            def __init__(self, df, name):
+                out = io.BytesIO()
+                with zipfile.ZipFile(out, 'w') as zf:
+                    sub_out = io.BytesIO()
+                    df.to_excel(sub_out, index=False)
+                    zf.writestr("1.xlsx", sub_out.getvalue())
+                out.seek(0)
+                self.bytes = out.getvalue()
+                self.name = name
+            def read(self):
+                return self.bytes
+            def seek(self, pos):
+                pass
+                
+        f_m = MockFile(df_media, "media.zip")
+        f_s = MockFile(df_sales, "sales.zip")
+        
+        consolidated = process_live_files([f_m, f_s], channel="Shopee PH")
+        self.assertEqual(len(consolidated), 2)
+        
+        red_row = consolidated[consolidated["sku"] == "SKU_RED_M"].iloc[0]
+        self.assertEqual(red_row["product_id"], "12345")
+        self.assertEqual(red_row["color_name"], "Red")
+        self.assertEqual(red_row["size_chart"], "https://img.com/sc.jpg")
+        self.assertIn("https://img.com/red.jpg", red_row["images"])
+        self.assertTrue(red_row["images"].startswith("https://img.com/red.jpg"))
+        
+        blue_row = consolidated[consolidated["sku"] == "SKU_BLUE_L"].iloc[0]
+        self.assertEqual(blue_row["product_id"], "12345")
+        self.assertEqual(blue_row["color_name"], "Blue")
+        self.assertEqual(blue_row["size_chart"], "https://img.com/sc.jpg")
+        self.assertIn("https://img.com/blue.jpg", blue_row["images"])
+        self.assertTrue(blue_row["images"].startswith("https://img.com/blue.jpg"))
+
 if __name__ == '__main__':
     unittest.main()
