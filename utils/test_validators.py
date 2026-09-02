@@ -900,5 +900,51 @@ class TestValidators(unittest.TestCase):
         self.assertIn("https://img.com/blue.jpg", blue_row["images"])
         self.assertTrue(blue_row["images"].startswith("https://img.com/blue.jpg"))
 
+    def test_zecom_resolution_fallbacks(self):
+        from listing_qc_validator.utils.validators import validate_dataframe
+        
+        # Test case: df has no article_number, but has parent_sku that matches zEcom
+        df_target = pd.DataFrame([
+            {
+                "sku": "4069162515773",
+                "product_id": "58154913222",
+                "parent_sku": "312587_01",
+                "article_number": "",
+                "product_name": "PUMA Shoe",
+                "color_name": "Black",
+                "size": "9.5",
+                "price": "4200",
+                "quantity": "0",
+                "images": "http://img.com/1.jpg",
+                "size_chart": "http://img.com/sc.jpg",
+                "launch_date": ""
+            }
+        ])
+        
+        df_zecom = pd.DataFrame([
+            {
+                "Article No": "312587_01",
+                "LAZ & SHP Launch Date": "2024-07-31",
+                "Ecom_Shopee": "Yes",
+                "rrp_price": "4200"
+            }
+        ])
+        
+        exc_df, val_df, _ = validate_dataframe(
+            df_target,
+            qc_stage="Post QC",
+            channel="Shopee PH",
+            zecom_df=df_zecom,
+            is_live_report=True
+        )
+        
+        self.assertEqual(len(val_df), 1)
+        row = val_df.iloc[0]
+        self.assertEqual(row["article_number"], "312587_01")
+        self.assertEqual(row["launch_date"], "2024-07-31")
+        self.assertEqual(row["Zeocm Status"], "Yes")
+        self.assertEqual(row["ref_rrp"], "4200")
+        self.assertEqual(row["RRP Check"], "OK")
+
 if __name__ == '__main__':
     unittest.main()
