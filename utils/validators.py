@@ -1070,12 +1070,31 @@ def validate_dataframe(
     df["_corrected_size"] = df["size"].fillna("").astype(str).str.strip().apply(correct_size)
     df["_corrected_size_low"] = df["_corrected_size"].str.lower().str.strip()
     
-    # Resolve missing Article Number using SKU from content_maps
-    if sku_to_article:
-        missing_art_mask = df["article_number"].fillna("").astype(str).str.strip() == ""
+    # Resolve missing Article Number using SKU, parent_sku, or direct zecom lookups
+    if "article_number" not in df.columns:
+        df["article_number"] = ""
+    missing_art_mask = df["article_number"].fillna("").astype(str).str.strip() == ""
+    
+    if sku_to_article and missing_art_mask.any():
         resolved_arts = df.loc[missing_art_mask, "_cleaned_sku"].map(sku_to_article)
         df.loc[missing_art_mask, "article_number"] = resolved_arts.fillna("")
-        df.loc[missing_art_mask, "_norm_art"] = df.loc[missing_art_mask, "article_number"].apply(_normalise_article_no)
+        missing_art_mask = df["article_number"].fillna("").astype(str).str.strip() == ""
+        
+    if "parent_sku" in df.columns and missing_art_mask.any():
+        df.loc[missing_art_mask, "article_number"] = df.loc[missing_art_mask, "parent_sku"].fillna("").astype(str).str.strip()
+        missing_art_mask = df["article_number"].fillna("").astype(str).str.strip() == ""
+        
+    if zecom_maps and missing_art_mask.any():
+        article_to_launchdate, article_to_ecomstatus, _ = zecom_maps
+        valid_arts = set(article_to_ecomstatus.keys()) if article_to_ecomstatus else set()
+        if article_to_launchdate:
+            valid_arts.update(article_to_launchdate.keys())
+        for idx in df[missing_art_mask].index:
+            s_cand = _normalise_article_no(str(df.at[idx, "_cleaned_sku"]))
+            if s_cand in valid_arts:
+                df.at[idx, "article_number"] = s_cand
+                
+    df["_norm_art"] = df["article_number"].fillna("").astype(str).str.strip().apply(_normalise_article_no)
 
     # Resolve missing Launch Date using _norm_art from zecom_maps
     if zecom_maps:
