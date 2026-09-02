@@ -52,7 +52,7 @@ def cached_load_content(file_bytes, file_name):
     return load_content(BytesFile(file_bytes, file_name))
 
 @st.cache_data(max_entries=2)
-def cached_load_zecom(file_bytes, file_name, country, channel=None, status_col_letter=None, launch_col_letter=None):
+def cached_load_zecom(file_bytes, file_name, country):
     from utils.file_loaders import load_zecom
     class BytesFile:
         def __init__(self, b, n):
@@ -62,10 +62,7 @@ def cached_load_zecom(file_bytes, file_name, country, channel=None, status_col_l
             return self.bytes
         def seek(self, pos):
             pass
-    return load_zecom(
-        BytesFile(file_bytes, file_name), country,
-        channel=channel, status_col_letter=status_col_letter, launch_col_letter=launch_col_letter
-    )
+    return load_zecom(BytesFile(file_bytes, file_name), country)
 
 @st.cache_data(max_entries=2)
 def cached_process_live_files(live_files_data, channel):
@@ -189,26 +186,6 @@ with st.sidebar:
         type=["xlsx", "xls", "csv"],
         key="ref_zecom"
     )
-
-    with st.expander("⚙️ Manual zEcom Column Override (optional)"):
-        st.caption(
-            "Tracker headers keep shifting? Point directly at the Excel column "
-            "letter instead of relying on auto-detection. Leave blank to auto-detect as before."
-        )
-        zecom_status_col_letter = st.text_input(
-            "Ecom Status Column (e.g. Y)",
-            value="",
-            placeholder="Y",
-            key="zecom_status_letter",
-            help=f"Column holding the Active/Inactive status for the currently selected channel ({channel})."
-        ).strip()
-        zecom_launch_col_letter = st.text_input(
-            "Launch Date Column (e.g. AA)",
-            value="",
-            placeholder="AA",
-            key="zecom_launch_letter",
-            help="Column holding the Launch Date used for the future-launch check."
-        ).strip()
     
     # 3. Post QC Channel Marketplace Files
     live_files = []
@@ -311,13 +288,6 @@ with st.sidebar:
         custom_statuses = [s.strip().lower() for s in custom_statuses_str.split(",") if s.strip()]
         
         check_live_images = st.checkbox("Live HTTP Image Check", value=False)
-        fast_image_mode = st.checkbox(
-            "⚡ Fast Image Compare (primary image only)",
-            value=True,
-            help="Compares only the first/primary image per SKU instead of all Images1-8. "
-                 "Cuts image download volume by up to ~8x on Lazada-style sheets. "
-                 "Turn off for a full all-image audit (slower, more thorough)."
-        )
 
 # ── Main Content Area ────────────────────────────────────────────────────────
 # ── Setup Checklist Dashboard ────────────────────────────────────────────────
@@ -472,12 +442,7 @@ if target_loaded:
             with st.spinner("Loading references and running validations..."):
                 try:
                     content_df = cached_load_content(content_file.getvalue(), content_file.name)
-                    zecom_df = cached_load_zecom(
-                        zecom_file.getvalue(), zecom_file.name, country,
-                        channel=channel,
-                        status_col_letter=zecom_status_col_letter or None,
-                        launch_col_letter=zecom_launch_col_letter or None
-                    )
+                    zecom_df = cached_load_zecom(zecom_file.getvalue(), zecom_file.name, country)
                     
                     all_standardized = []
                     for fn, df in upload_dfs.items():
@@ -509,20 +474,44 @@ if target_loaded:
                         article_to_launchdate = zecom_maps[0] if zecom_maps else {}
                         article_to_ecomstatus = zecom_maps[1] if zecom_maps else {}
                         
-                        consolidated_live["_match_key"] = consolidated_live["sku"].astype(str).str.strip().apply(_clean_sku)
-                        live_dict = consolidated_live.drop_duplicates(subset=["_match_key"]).set_index("_match_key").to_dict("index")
+                        is_shopee_or_tiktok = channel and any(p in channel.lower() for p in ["shopee", "tiktok"])
+                        
+                        live_sku_dict = {}
+                        live_pid_color_dict = {}
+                        live_pid_size_dict = {}
+                        live_pid_dict = {}
+                        
+                        for _, l_row in consolidated_live.iterrows():
+                            l_sku = _clean_sku(l_row.get("sku", ""))
+                            l_pid = str(l_row.get("product_id", "")).strip()
+                            l_color = str(l_row.get("color_name", "")).strip().lower()
+                            l_size = str(l_row.get("size", "")).strip().lower()
+                            
+                            r_dict = l_row.to_dict()
+                            if l_sku and l_sku not in live_sku_dict:
+                                live_sku_dict[l_sku] = r_dict
+                            if l_pid and l_pid not in ["nan", "None", ""]:
+                                if l_color and (l_pid, l_color) not in live_pid_color_dict:
+                                    live_pid_color_dict[(l_pid, l_color)] = r_dict
+                                if l_size and (l_pid, l_size) not in live_pid_size_dict:
+                                    live_pid_size_dict[(l_pid, l_size)] = r_dict
+                                if l_pid not in live_pid_dict:
+                                    live_pid_dict[l_pid] = r_dict
                         
                         # Build a new dataframe for Post QC validation
                         post_qc_records = []
                         for idx, row in combined_df.iterrows():
                             raw_sku = str(row.get("sku", "")).strip()
                             clean_s = _clean_sku(raw_sku)
-                            if not clean_s:
-                                continue
-                                
                             prod_id_val = str(row.get("product_id", "")).strip()
-                            match_k = clean_s
+                            target_color = str(row.get("color_name", "")).strip().lower()
+                            target_size = str(row.get("size", "")).strip().lower()
                             
+                            if not clean_s and not prod_id_val:
+                                continue
+                            if not clean_s:
+                                clean_s = prod_id_val
+                                
                             # 1. Fetch Article No from Content File
                             ref_art = sku_to_article.get(clean_s, "")
                             
@@ -530,8 +519,27 @@ if target_loaded:
                             norm_art = _normalise_article_no(ref_art)
                             ref_ld = article_to_launchdate.get(norm_art, "")
                             
-                            # 3. Fetch all other fields from Post QC Live Reports (by matching clean SKU or product_id)
-                            live_row = live_dict.get(match_k, {})
+                            # 3. Fetch all other fields from Post QC Live Reports (by matching Product ID / Color or clean SKU)
+                            live_row = {}
+                            if is_shopee_or_tiktok and prod_id_val and prod_id_val not in ["nan", "None", ""]:
+                                if target_color:
+                                    live_row = live_pid_color_dict.get((prod_id_val, target_color), {})
+                                    if not live_row:
+                                        for (p, c), r_d in live_pid_color_dict.items():
+                                            if p == prod_id_val and (c in target_color or target_color in c):
+                                                live_row = r_d
+                                                break
+                                if not live_row and target_size:
+                                    live_row = live_pid_size_dict.get((prod_id_val, target_size), {})
+                                if not live_row:
+                                    live_row = live_pid_dict.get(prod_id_val, {})
+                                if not live_row and clean_s:
+                                    live_row = live_sku_dict.get(clean_s, {})
+                            else:
+                                if clean_s:
+                                    live_row = live_sku_dict.get(clean_s, {})
+                                if not live_row and prod_id_val:
+                                    live_row = live_pid_dict.get(prod_id_val, {})
                             
                             # Standardize gender: from content file gender
                             gender_val = sku_to_gender.get(clean_s, "")
@@ -563,7 +571,7 @@ if target_loaded:
                                 
                             post_qc_records.append({
                                 "sku": clean_s,
-                                "product_id": prod_id_val if prod_id_val else (live_row.get("product_id", "") if live_row else ""),
+                                "product_id": prod_id_val if prod_id_val and prod_id_val not in ["nan", "None"] else (str(live_row.get("product_id", "")).strip() if live_row else ""),
                                 "article_number": ref_art,
                                 "launch_date": ref_ld,
                                 "ecommerce_status": ecommerce_status,
@@ -833,55 +841,40 @@ if target_loaded:
                     st.info("💡 Please upload Live marketplace files (Excel, CSV, or ZIP) in the sidebar to run the sync audit.")
                 else:
                     if st.button("🔄 Execute Comparison Audit", type="primary", key="btn_run_compare"):
-                        try:
-                            with st.spinner("Consolidating live reports..."):
-                                # Use the cached parser (keyed on file bytes) instead of
-                                # re-parsing the raw uploads on every rerun - this alone
-                                # avoids redundant Excel/CSV parsing on large files.
-                                live_files_data = [(lf.getvalue(), lf.name) for lf in live_files]
-                                consolidated_live = cached_process_live_files(live_files_data, channel)
-
-                            if consolidated_live.empty:
-                                st.error("Could not parse any valid listing data from the uploaded live files. Please verify the headers and formats.")
-                            else:
-                                st.success(f"✅ Successfully loaded and consolidated {len(consolidated_live)} live listing variants.")
-
-                                standardized_source = val_df.copy()
-
-                                # Get reference files if available in session/variables
-                                content_df_ref = None
-                                zecom_df_ref = None
-                                if content_file:
-                                    content_df_ref = content_df
-                                if zecom_file:
-                                    zecom_df_ref = zecom_df
-
-                                progress_bar = st.progress(0.0, text="Downloading & hashing images for comparison...")
-
-                                def _update_progress(done, total):
-                                    if total:
-                                        pct = min(done / total, 1.0)
-                                        progress_bar.progress(pct, text=f"Downloading & hashing images... {done}/{total}")
-
-                                comp_df, comp_metrics = compare_source_and_live(
-                                    standardized_source,
-                                    consolidated_live,
-                                    match_column="sku",
-                                    content_df=content_df_ref,
-                                    zecom_df=zecom_df_ref,
-                                    channel=channel,
-                                    fast_mode=fast_image_mode,
-                                    progress_callback=_update_progress
-                                )
-                                progress_bar.empty()
-
-                                st.session_state.comp_df = comp_df
-                                st.session_state.comp_metrics = comp_metrics
-                                st.session_state.ran_comparison = True
-                        except Exception as e:
-                            st.error(f"Comparison run failed: {e}")
-                            import traceback
-                            st.error(traceback.format_exc())
+                        with st.spinner("Consolidating live reports and running comparison..."):
+                            try:
+                                consolidated_live = process_live_files(live_files, channel)
+                                if consolidated_live.empty:
+                                    st.error("Could not parse any valid listing data from the uploaded live files. Please verify the headers and formats.")
+                                else:
+                                    st.success(f"✅ Successfully loaded and consolidated {len(consolidated_live)} live listing variants.")
+                                    
+                                    standardized_source = val_df.copy()
+                                    
+                                    # Get reference files if available in session/variables
+                                    content_df_ref = None
+                                    zecom_df_ref = None
+                                    if content_file:
+                                        content_df_ref = content_df
+                                    if zecom_file:
+                                        zecom_df_ref = zecom_df
+                                        
+                                    comp_df, comp_metrics = compare_source_and_live(
+                                        standardized_source,
+                                        consolidated_live,
+                                        match_column="sku",
+                                        content_df=content_df_ref,
+                                        zecom_df=zecom_df_ref,
+                                        channel=channel
+                                    )
+                                    
+                                    st.session_state.comp_df = comp_df
+                                    st.session_state.comp_metrics = comp_metrics
+                                    st.session_state.ran_comparison = True
+                            except Exception as e:
+                                st.error(f"Comparison run failed: {e}")
+                                import traceback
+                                st.error(traceback.format_exc())
                                 
                     if st.session_state.ran_comparison:
                         st.markdown("---")
