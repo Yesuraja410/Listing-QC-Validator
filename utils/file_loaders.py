@@ -4,23 +4,6 @@ import zipfile
 import urllib.parse
 import pandas as pd
 import numpy as np
-from typing import List, Tuple
-
-def excel_col_to_index(col_letters) -> int:
-    """
-    Converts an Excel-style column letter (A, B, ..., Z, AA, AB, ...) to a
-    0-based column index. Returns -1 if the input is blank/invalid so callers
-    can safely no-op on bad input.
-    """
-    if col_letters is None:
-        return -1
-    s = str(col_letters).strip().upper()
-    if not s or not re.fullmatch(r"[A-Z]+", s):
-        return -1
-    idx = 0
-    for ch in s:
-        idx = idx * 26 + (ord(ch) - ord('A') + 1)
-    return idx - 1
 
 # Synonyms for auto-mapping columns
 COLUMN_SYNONYMS = {
@@ -941,7 +924,7 @@ def load_content(file):
     return df
 
 # ── zEcom Loader (extracts launch dates, ecom statuses, and RRP Price)
-def load_zecom(file, country="PH", channel=None, status_col_letter=None, launch_col_letter=None):
+def load_zecom(file, country="PH"):
     if file is None:
         return pd.DataFrame()
     raw = file.read()
@@ -1048,18 +1031,7 @@ def load_zecom(file, country="PH", channel=None, status_col_letter=None, launch_
     df.columns = [_safe_str(x) for x in raw_df.iloc[header_idx]]
     df = df.loc[:, ~df.columns.duplicated()].copy()
     df = df.reset_index(drop=True)
-
-    # ── Capture manual column overrides (by Excel letter) BEFORE any row
-    # filtering below, so they stay positionally aligned with df's rows. ──
-    launch_idx = excel_col_to_index(launch_col_letter)
-    status_idx = excel_col_to_index(status_col_letter)
-    if launch_idx >= 0 or status_idx >= 0:
-        raw_data_rows = raw_df.iloc[header_idx + 1:].reset_index(drop=True)
-        if launch_idx >= 0 and launch_idx < raw_data_rows.shape[1]:
-            df["_manual_launch_raw"] = raw_data_rows.iloc[:, launch_idx].values
-        if status_idx >= 0 and status_idx < raw_data_rows.shape[1]:
-            df["_manual_status_raw"] = raw_data_rows.iloc[:, status_idx].values
-
+    
     first_col = df.columns[0]
     df = df[df[first_col].apply(_safe_str) != first_col].copy()
     df = df.reset_index(drop=True)
@@ -1089,11 +1061,7 @@ def load_zecom(file, country="PH", channel=None, status_col_letter=None, launch_
         df["rrp_price"] = ""
 
     has_platform_launch = any(any(k in " ".join(str(col).lower().split()).replace(" ", "") for k in ["laz&shp", "zal&tk", "tiktok&zalora", "shopee&lazada"]) for col in df.columns)
-    if "_manual_launch_raw" in df.columns:
-        # Manual override wins outright - skip all header-name guessing.
-        df["Launch Date"] = df["_manual_launch_raw"]
-        df.attrs["manual_launch_override"] = True
-    elif not has_platform_launch:
+    if not has_platform_launch:
         launch_col = None
         for c in ["Launch Dates", "Launch Date", "LaunchDate", "Launch"]:
             if c in df.columns:
@@ -1158,19 +1126,7 @@ def load_zecom(file, country="PH", channel=None, status_col_letter=None, launch_
                 ),
                 axis=1,
             )
-
-    # Manual Ecom Status override for the currently selected channel's platform
-    # wins over whatever the auto-detector above picked.
-    if "_manual_status_raw" in df.columns and channel:
-        platform = channel.split()[0].lower()
-        ecom_name = "Ecom_TikTok" if platform == "tiktok" else f"Ecom_{platform.capitalize()}"
-        df[ecom_name] = df.apply(
-            lambda row: _ecom_status_from_val(row["_manual_status_raw"], row.get("Future Launch", False)),
-            axis=1,
-        )
-        df.attrs["manual_status_override"] = True
-        df.attrs["manual_status_platform"] = ecom_name
-
+            
     return df
 
 # ── Auto column mapping functions ─────────────────────────────────────────────
@@ -1308,25 +1264,6 @@ def _clean_live_df_skipping(df: pd.DataFrame, sku_col: str, platform: str) -> pd
             return df.iloc[3:].reset_index(drop=True)
     return df
 
-def _split_images_and_sizechart(imgs: List[str], explicit_sc: str = "") -> Tuple[List[str], str]:
-    """
-    Live marketplace reports (Lazada/Shopee/TikTok) don't carry a dedicated
-    'Size Chart' column - the size chart is simply uploaded as one of the
-    Images1-8 slots, and it always ends up as the LAST populated image slot
-    for that row (any unused slots after it are blank).
-
-    If an explicit size-chart column/value was found some other way, that
-    takes priority. Otherwise, when there are 2+ populated image slots, the
-    last one is treated as the size chart and excluded from the product
-    image list.
-    """
-    explicit_sc = (explicit_sc or "").strip()
-    if explicit_sc:
-        return imgs, explicit_sc
-    if len(imgs) >= 2:
-        return imgs[:-1], imgs[-1]
-    return imgs, ""
-
 def parse_live_lazada(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame()
@@ -1383,14 +1320,12 @@ def parse_live_lazada(df: pd.DataFrame) -> pd.DataFrame:
             color_val = _safe_str(row.get(color_col)) if color_col else ""
             size_val = _safe_str(row.get(size_col)) if size_col else ""
             
-        imgs_raw = [str(row[c]).strip() for c in img_cols if pd.notna(row.get(c)) and str(row[c]).strip() not in ("", "nan", "None")]
+        imgs = [str(row[c]).strip() for c in img_cols if pd.notna(row.get(c)) and str(row[c]).strip() not in ("", "nan", "None")]
+        imgs_str = ",".join(imgs)
         
         # If sc_col cell contains "size chart" instruction string, treat the URL value as empty
         cell_sc = _safe_str(row.get(sc_col)) if sc_col else ""
-        explicit_sc = cell_sc if cell_sc.lower().strip() not in ("size chart", "sizechart") else ""
-        
-        imgs, sc_val = _split_images_and_sizechart(imgs_raw, explicit_sc)
-        imgs_str = ",".join(imgs)
+        sc_val = cell_sc if cell_sc.lower().strip() not in ("size chart", "sizechart") else ""
         
         records.append({
             "sku": sku_val,
@@ -1405,59 +1340,150 @@ def parse_live_lazada(df: pd.DataFrame) -> pd.DataFrame:
         })
     return pd.DataFrame(records)
 
+def clean_shopee_instruction_rows(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+    rows_to_drop = []
+    for idx in range(min(5, len(df))):
+        r = df.iloc[idx]
+        vals = [str(v).strip().lower() for v in r.values if pd.notna(v)]
+        if any(v in ['mandatory', 'optional', 'conditional mandatory', 'not editable'] for v in vals):
+            rows_to_drop.append(df.index[idx])
+        elif any(v.startswith(('please insert', 'please enter', 'insert url here', 'you only need')) for v in vals):
+            rows_to_drop.append(df.index[idx])
+    if rows_to_drop:
+        df = df.drop(index=rows_to_drop).reset_index(drop=True)
+    return df
+
 def parse_live_shopee(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame()
-    df_data = _normalise_cols(df.copy())
+    df_data = clean_shopee_instruction_rows(_normalise_cols(df.copy()))
+    cols = df_data.columns.tolist()
     
-    sku_col = next((c for c in df_data.columns if "sku" in c.lower() and "parent" not in c.lower()), None)
-    if sku_col:
-        df_data = _clean_live_df_skipping(df_data, sku_col, "shopee")
-        
-    parent_col = next((c for c in df_data.columns if "parent" in c.lower() and "sku" in c.lower()), None)
-    prod_col = next((c for c in df_data.columns if "product" in c.lower() and "id" in c.lower() or "item" in c.lower() and "id" in c.lower()), None)
-    name_col = next((c for c in df_data.columns if "product" in c.lower() and "name" in c.lower()), None)
+    prod_col = next((c for c in cols if 'product' in str(c).lower() and 'id' in str(c).lower()), None)
+    parent_col = next((c for c in cols if 'parent' in str(c).lower() and 'sku' in str(c).lower()), None)
+    sku_col = next((c for c in cols if str(c).lower() in ['sku', 'variation sku', 'variation_sku', 'seller sku', 'sellersku'] or ('sku' in str(c).lower() and 'parent' not in str(c).lower())), None)
+    name_col = next((c for c in cols if 'product' in str(c).lower() and 'name' in str(c).lower()), None)
     if not name_col:
-        name_col = next((c for c in df_data.columns if "name" in c.lower() and "variation" not in c.lower() and "parent" not in c.lower()), None)
+        name_col = next((c for c in cols if 'name' in str(c).lower() and 'variation' not in str(c).lower() and 'parent' not in str(c).lower()), None)
         
-    price_col = next((c for c in df_data.columns if "price" in c.lower()), None)
-    stock_col = next((c for c in df_data.columns if "stock" in c.lower() or "quantity" in c.lower() or "qty" in c.lower()), None)
+    price_col = next((c for c in cols if 'price' in str(c).lower()), None)
+    stock_col = next((c for c in cols if 'stock' in str(c).lower() or 'quantity' in str(c).lower() or 'qty' in str(c).lower()), None)
+    var_col = next((c for c in cols if 'variation' in str(c).lower() and 'name' in str(c).lower() or str(c).lower() in ["variation", "variation_name"]), None)
     
-    var_col = next((c for c in df_data.columns if "variation" in c.lower() and "name" in c.lower() or c.lower() in ["variation", "variation_name"]), None)
-    color_col = next((c for c in df_data.columns if c.lower() in ["color", "colour", "color name", "color_name"]), None)
-    size_col = next((c for c in df_data.columns if c.lower() in ["size", "size_name", "size name"]), None)
+    # Check if this is a Media Info sheet (has Cover image or Option images)
+    is_media_sheet = any('cover image' in str(c).lower() or 'item image' in str(c).lower() or 'option 1 image' in str(c).lower() for c in cols)
     
-    # Dynamic size chart column detection by cell content check
-    sc_col = next((c for c in df_data.columns if "chart" in c.lower()), None)
-    if not sc_col:
-        for col in df_data.columns:
-            if df_data[col].astype(str).str.lower().str.strip().isin(["size chart", "sizechart"]).any():
-                sc_col = col
-                break
+    if is_media_sheet:
+        sc_col = next((c for c in cols if 'size chart image' in str(c).lower() or ('chart' in str(c).lower() and 'image' in str(c).lower())), None)
+        if not sc_col:
+            sc_col = next((c for c in cols if 'chart' in str(c).lower()), None)
+            
+        item_img_cols = [c for c in cols if any(k in str(c).lower() for k in ['cover image', 'item image'])]
+        option_pairs = []
+        for i in range(1, 25):
+            name_c = next((c for c in cols if f'option {i} name' in str(c).lower() or f'option{i} name' in str(c).lower()), None)
+            img_c = next((c for c in cols if f'option {i} image' in str(c).lower() or f'option{i} image' in str(c).lower()), None)
+            if name_c and img_c:
+                option_pairs.append((name_c, img_c))
                 
-    img_cols = [c for c in df_data.columns if "image" in c.lower() and "chart" not in c.lower()]
-    if sc_col and sc_col in img_cols:
-        img_cols.remove(sc_col)
+        records = []
+        for _, row in df_data.iterrows():
+            raw_pid = row.get(prod_col)
+            if pd.isna(raw_pid) or str(raw_pid).strip() in ['', 'Product ID', 'Mandatory', 'et_title_product_id']:
+                continue
+            try:
+                pid = str(int(float(raw_pid))).strip()
+            except Exception:
+                pid = str(raw_pid).strip()
+                
+            if not pid or pid in ['nan', 'None']:
+                continue
+                
+            p_sku = _clean_sku(row.get(parent_col, ''))
+            p_name = _safe_str(row.get(name_col, ''))
+            
+            base_imgs = []
+            for c in item_img_cols:
+                val = str(row.get(c, '')).strip()
+                if val and val not in ['nan', 'None', 'Optional', 'Mandatory'] and not val.startswith(('Please insert', 'Please enter')):
+                    base_imgs.append(val)
+                    
+            sc_val = ""
+            if sc_col:
+                val = str(row.get(sc_col, '')).strip()
+                if val and val not in ['nan', 'None', 'Conditional Mandatory', 'Optional'] and not val.startswith(('Please', 'Insert url', 'You only need')):
+                    sc_val = val
+                    
+            # Check options
+            options_found = []
+            for n_c, i_c in option_pairs:
+                opt_name = str(row.get(n_c, '')).strip()
+                opt_img = str(row.get(i_c, '')).strip()
+                if opt_name and opt_name not in ['nan', 'None', 'Not Editable'] and opt_img and opt_img not in ['nan', 'None', 'Optional'] and not opt_img.startswith(('If the product', 'Please')):
+                    options_found.append((opt_name, opt_img))
+                    
+            if options_found:
+                for opt_name, opt_img in options_found:
+                    full_imgs = [opt_img] + [img for img in base_imgs if img != opt_img]
+                    records.append({
+                        "sku": p_sku if p_sku else pid,
+                        "product_id": pid,
+                        "product_name": p_name,
+                        "color_name": opt_name,
+                        "size": "",
+                        "price": "0.0",
+                        "quantity": "0",
+                        "images": ",".join(full_imgs),
+                        "size_chart": sc_val,
+                        "ecommerce_status": "Active",
+                        "_is_media_row": True
+                    })
+            else:
+                records.append({
+                    "sku": p_sku if p_sku else pid,
+                    "product_id": pid,
+                    "product_name": p_name,
+                    "color_name": "",
+                    "size": "",
+                    "price": "0.0",
+                    "quantity": "0",
+                    "images": ",".join(base_imgs),
+                    "size_chart": sc_val,
+                    "ecommerce_status": "Active",
+                    "_is_media_row": True
+                })
+        return pd.DataFrame(records)
+    
+    # Otherwise standard Sales / Live sheet
+    sc_col = next((c for c in cols if "chart" in str(c).lower()), None)
+    img_cols = [c for c in cols if "image" in str(c).lower() and "chart" not in str(c).lower()]
+    color_col = next((c for c in cols if str(c).lower() in ["color", "colour", "color name", "color_name"]), None)
+    size_col = next((c for c in cols if str(c).lower() in ["size", "size_name", "size name"]), None)
     
     records = []
     for _, row in df_data.iterrows():
         sku_val = _clean_sku(row.get(sku_col)) if sku_col else ""
         parent_val = _clean_sku(row.get(parent_col)) if parent_col else ""
-        prod_val = _safe_str(row.get(prod_col)) if prod_col else ""
-        
+        raw_pid = row.get(prod_col)
+        try:
+            prod_val = str(int(float(raw_pid))).strip() if pd.notna(raw_pid) else ""
+        except Exception:
+            prod_val = _safe_str(raw_pid)
+            
         if not sku_val and parent_val:
             sku_val = parent_val
         if not sku_val and prod_val:
             sku_val = prod_val
             
-        if not sku_val:
+        if not sku_val or sku_val.lower() in ['sku', 'mandatory', 'optional']:
             continue
             
         name_val = _safe_str(row.get(name_col)) if name_col else ""
         price_val = _safe_str(row.get(price_col)) if price_col else "0.0"
         stock_val = _safe_str(row.get(stock_col)) if stock_col else "0"
         
-        # Variation parsing (combo or separate)
         if var_col and not is_empty(row.get(var_col)):
             var_val = _safe_str(row.get(var_col))
             color_val, size_val = parse_variation_combo(var_val)
@@ -1465,14 +1491,11 @@ def parse_live_shopee(df: pd.DataFrame) -> pd.DataFrame:
             color_val = _safe_str(row.get(color_col)) if color_col else ""
             size_val = _safe_str(row.get(size_col)) if size_col else ""
             
-        imgs_raw = [str(row[c]).strip() for c in img_cols if pd.notna(row.get(c)) and str(row[c]).strip() not in ("", "nan", "None")]
-        
-        # If sc_col cell contains "size chart" instruction string, treat the URL value as empty
-        cell_sc = _safe_str(row.get(sc_col)) if sc_col else ""
-        explicit_sc = cell_sc if cell_sc.lower().strip() not in ("size chart", "sizechart") else ""
-        
-        imgs, sc_val = _split_images_and_sizechart(imgs_raw, explicit_sc)
+        imgs = [str(row[c]).strip() for c in img_cols if pd.notna(row.get(c)) and str(row[c]).strip() not in ("", "nan", "None", "Optional", "Mandatory") and not str(row[c]).strip().startswith(('Please', 'If the product'))]
         imgs_str = ",".join(imgs)
+        
+        cell_sc = _safe_str(row.get(sc_col)) if sc_col else ""
+        sc_val = cell_sc if cell_sc.lower().strip() not in ("size chart", "sizechart", "conditional mandatory", "optional") and not cell_sc.startswith(('Please', 'Insert url', 'You only need')) else ""
         
         records.append({
             "sku": sku_val,
@@ -1484,7 +1507,8 @@ def parse_live_shopee(df: pd.DataFrame) -> pd.DataFrame:
             "quantity": stock_val,
             "images": imgs_str,
             "size_chart": sc_val,
-            "ecommerce_status": "Active"
+            "ecommerce_status": "Active",
+            "_is_media_row": False
         })
     return pd.DataFrame(records)
 
@@ -1543,14 +1567,12 @@ def parse_live_tiktok(df: pd.DataFrame) -> pd.DataFrame:
             color_val = _safe_str(row.get(color_col)) if color_col else ""
             size_val = _safe_str(row.get(size_col)) if size_col else ""
             
-        imgs_raw = [str(row[c]).strip() for c in img_cols if pd.notna(row.get(c)) and str(row[c]).strip() not in ("", "nan", "None")]
+        imgs = [str(row[c]).strip() for c in img_cols if pd.notna(row.get(c)) and str(row[c]).strip() not in ("", "nan", "None")]
+        imgs_str = ",".join(imgs)
         
         # If sc_col cell contains "size chart" instruction string, treat the URL value as empty
         cell_sc = _safe_str(row.get(sc_col)) if sc_col else ""
-        explicit_sc = cell_sc if cell_sc.lower().strip() not in ("size chart", "sizechart") else ""
-        
-        imgs, sc_val = _split_images_and_sizechart(imgs_raw, explicit_sc)
-        imgs_str = ",".join(imgs)
+        sc_val = cell_sc if cell_sc.lower().strip() not in ("size chart", "sizechart") else ""
         
         records.append({
             "sku": sku_val,
@@ -1600,14 +1622,12 @@ def parse_live_zalora(df: pd.DataFrame) -> pd.DataFrame:
             continue
             
         name_val = _safe_str(row.get(name_col)) if name_col else ""
-        imgs_raw = [str(row[c]).strip() for c in img_cols if pd.notna(row.get(c)) and str(row[c]).strip() not in ("", "nan", "None")]
+        imgs = [str(row[c]).strip() for c in img_cols if pd.notna(row.get(c)) and str(row[c]).strip() not in ("", "nan", "None")]
+        imgs_str = ",".join(imgs)
         
         # If sc_col cell contains "size chart" instruction string, treat the URL value as empty
         cell_sc = _safe_str(row.get(sc_col)) if sc_col else ""
-        explicit_sc = cell_sc if cell_sc.lower().strip() not in ("size chart", "sizechart") else ""
-        
-        imgs, sc_val = _split_images_and_sizechart(imgs_raw, explicit_sc)
-        imgs_str = ",".join(imgs)
+        sc_val = cell_sc if cell_sc.lower().strip() not in ("size chart", "sizechart") else ""
         
         for sku_val in skus:
             clean_s = _clean_sku(sku_val)
@@ -1710,7 +1730,7 @@ def detect_header_row(data: bytes, is_csv: bool) -> int:
         if not s or len(s) > 45:
             return False
         s_low = s.lower()
-        if s_low.startswith(("http://", "https://")):
+        if s_low.startswith(("et_title_", "ps_", "http://", "https://", "{")):
             return False
         if s_low.endswith((".jpg", ".jpeg", ".png", ".gif", ".webp")):
             return False
@@ -1797,6 +1817,72 @@ def process_live_files(uploaded_files, channel: str) -> pd.DataFrame:
         
     combined = pd.concat(platform_parsed_dfs, ignore_index=True)
     
+    if platform == "shopee":
+        combined["product_id"] = combined["product_id"].astype(str).str.strip()
+        combined["sku"] = combined["sku"].astype(str).str.strip()
+        
+        is_media_mask = combined.get("_is_media_row", pd.Series([False]*len(combined))) == True
+        media_df = combined[is_media_mask]
+        sales_df = combined[~is_media_mask]
+        
+        if not media_df.empty:
+            # Build media lookup by product_id:
+            # pid -> { 'size_chart': str, 'color_to_imgs': {color_lower: imgs_str}, 'default_imgs': imgs_str }
+            media_map = {}
+            for _, r in media_df.iterrows():
+                pid = str(r["product_id"]).strip()
+                if not pid or pid in ["nan", "None", ""]:
+                    continue
+                if pid not in media_map:
+                    media_map[pid] = {
+                        "size_chart": "",
+                        "color_to_imgs": {},
+                        "default_imgs": ""
+                    }
+                sc = str(r.get("size_chart", "")).strip()
+                if sc and sc not in ["nan", "None"] and not media_map[pid]["size_chart"]:
+                    media_map[pid]["size_chart"] = sc
+                    
+                c_name = str(r.get("color_name", "")).strip().lower()
+                imgs = str(r.get("images", "")).strip()
+                if c_name and imgs and imgs not in ["nan", "None"]:
+                    media_map[pid]["color_to_imgs"][c_name] = imgs
+                if imgs and imgs not in ["nan", "None"] and not media_map[pid]["default_imgs"]:
+                    media_map[pid]["default_imgs"] = imgs
+                    
+            if not sales_df.empty:
+                sales_df = sales_df.copy().astype(object)
+                for idx, r in sales_df.iterrows():
+                    pid = str(r["product_id"]).strip()
+                    if pid in media_map:
+                        m_info = media_map[pid]
+                        # Assign size chart if empty
+                        cur_sc = str(r.get("size_chart", "")).strip()
+                        if not cur_sc or cur_sc in ["nan", "None"]:
+                            sales_df.at[idx, "size_chart"] = m_info["size_chart"]
+                            
+                        # Assign color-specific images
+                        cur_img = str(r.get("images", "")).strip()
+                        if not cur_img or cur_img in ["nan", "None"]:
+                            s_color = str(r.get("color_name", "")).strip().lower()
+                            matched_imgs = m_info["color_to_imgs"].get(s_color, "")
+                            if not matched_imgs:
+                                for c_k, c_img in m_info["color_to_imgs"].items():
+                                    if c_k in s_color or s_color in c_k:
+                                        matched_imgs = c_img
+                                        break
+                            if not matched_imgs:
+                                matched_imgs = m_info["default_imgs"]
+                            sales_df.at[idx, "images"] = matched_imgs
+                consolidated = sales_df.groupby("sku", as_index=False).first()
+            else:
+                consolidated = media_df.groupby(["product_id", "color_name"], as_index=False).first()
+        else:
+            consolidated = sales_df.groupby("sku", as_index=False).first() if not sales_df.empty else combined
+            
+        consolidated = consolidated.drop(columns=["_is_media_row"], errors="ignore").fillna("")
+        return consolidated
+        
     # Merge rows by SKU by selecting first non-empty value for each column vectorially
     combined_cleaned = combined.copy()
     for col in combined_cleaned.columns:
@@ -1805,61 +1891,10 @@ def process_live_files(uploaded_files, channel: str) -> pd.DataFrame:
         combined_cleaned[col] = combined_cleaned[col].astype(str).str.strip()
         combined_cleaned.loc[combined_cleaned[col].isin(["", "nan", "None", "NaN", "<NA>"]), col] = np.nan
         
-    if platform == "shopee":
-        combined_cleaned["product_id"] = combined_cleaned["product_id"].astype(str).str.strip()
-        combined_cleaned["sku"] = combined_cleaned["sku"].astype(str).str.strip()
-        
-        # Separate sales rows from media rows
-        sales_rows = []
-        media_rows = []
-        for _, r in combined_cleaned.iterrows():
-            s_val = str(r.get("sku", "")).strip()
-            p_val = str(r.get("product_id", "")).strip()
-            imgs = str(r.get("images", "")).strip()
-            sc = str(r.get("size_chart", "")).strip()
-            
-            is_media = (imgs or sc) and (not s_val or s_val == p_val or len(s_val) < 8)
-            if is_media:
-                media_rows.append(r)
-            else:
-                sales_rows.append(r)
-                
-        if not sales_rows:
-            sales_rows = combined_cleaned.to_dict('records')
-            
-        df_sales = pd.DataFrame(sales_rows)
-        df_media = pd.DataFrame(media_rows)
-        
-        # Cast to object type to avoid pandas float64 insert TypeErrors
-        if not df_sales.empty:
-            df_sales = df_sales.astype(object)
-        if not df_media.empty:
-            df_media = df_media.astype(object)
-        
-        media_map = {}
-        if not df_media.empty:
-            for _, r in df_media.iterrows():
-                pid = str(r.get("product_id", "")).strip()
-                if pid and pid not in ["nan", "None", ""]:
-                    media_map[pid] = {
-                        "images": str(r.get("images", "")).strip(),
-                        "size_chart": str(r.get("size_chart", "")).strip()
-                    }
-                    
-        if not df_sales.empty:
-            for idx, r in df_sales.iterrows():
-                pid = str(r.get("product_id", "")).strip()
-                if pid in media_map:
-                    if not str(r.get("images", "")).strip() or str(r.get("images", "")).strip() == "nan":
-                        df_sales.at[idx, "images"] = media_map[pid]["images"]
-                    if not str(r.get("size_chart", "")).strip() or str(r.get("size_chart", "")).strip() == "nan":
-                        df_sales.at[idx, "size_chart"] = media_map[pid]["size_chart"]
-                        
-        consolidated = df_sales.groupby("sku", as_index=False).first()
-    elif platform == "tiktok" and "product_id" in combined_cleaned.columns:
+    if platform == "tiktok" and "product_id" in combined_cleaned.columns:
         combined_cleaned["product_id"] = combined_cleaned["product_id"].astype(str).str.strip()
         combined_cleaned.loc[combined_cleaned["product_id"].isin(["", "nan", "None", "NaN", "<NA>"]), "product_id"] = combined_cleaned["sku"]
-        consolidated = combined_cleaned.groupby("product_id", as_index=False).first()
+        consolidated = combined_cleaned.groupby(["product_id", "sku"], as_index=False).first()
     else:
         consolidated = combined_cleaned.groupby("sku", as_index=False).first()
         
