@@ -1053,8 +1053,10 @@ def load_zecom(file, country="PH"):
         df = df[df["Article No"].apply(_safe_str) != ""].copy()
         df = df.reset_index(drop=True)
 
-    # Auto-detect RRP Price column
-    rrp_col = next((c for c in df.columns if "rrp" in c.lower() or ("retail" in c.lower() and "price" in c.lower())), None)
+    # Auto-detect RRP Price column (handles 'RRP', 'PH EC RRP', 'MY RRP', 'SG RRP', 'Price', 'Retail Price', etc.)
+    rrp_col = next((c for c in df.columns if "rrp" in str(c).lower() or ("retail" in str(c).lower() and "price" in str(c).lower())), None)
+    if not rrp_col:
+        rrp_col = next((c for c in df.columns if str(c).lower().strip() == "price" or ("price" in str(c).lower() and not any(k in str(c).lower() for k in ["cost", "special", "discount", "wholesale"]))), None)
     if rrp_col:
         df["rrp_price"] = df[rrp_col].apply(_safe_str)
     else:
@@ -1069,7 +1071,7 @@ def load_zecom(file, country="PH"):
                 break
         if launch_col is None:
             for c in df.columns:
-                if "launch" in c.lower():
+                if "launch" in str(c).lower():
                     launch_col = c
                     break
         if launch_col and launch_col != "Launch Date":
@@ -1085,19 +1087,19 @@ def load_zecom(file, country="PH"):
         df["Future Launch"] = False
 
     mp_keywords = {
-        "lazada":  "Ecom_Lazada",
-        "shopee":  "Ecom_Shopee",
-        "zalora":  "Ecom_Zalora",
-        "tiktok":  "Ecom_TikTok",
+        "lazada":  ["lazada", "laz", "ecom_lazada"],
+        "shopee":  ["shopee", "shp", "ecom_shopee"],
+        "zalora":  ["zalora", "zal", "ecom_zalora"],
+        "tiktok":  ["tiktok", "tktk", "tk", "ecom_tiktok"],
     }
     def _clean_string(s):
         if not s:
             return ""
         return re.sub(r'[^a-z0-9]', '', str(s).lower())
 
-    for mp_key, ecom_name in mp_keywords.items():
+    for mp_key, aliases in mp_keywords.items():
+        ecom_name = f"Ecom_{mp_key.capitalize()}"
         target_col = None
-        mp_key_clean = _clean_string(mp_key)
         country_clean = _clean_string(country)
         
         # First try: platform name + country name
@@ -1106,7 +1108,7 @@ def load_zecom(file, country="PH"):
             if col in ("Article No", "Launch Date", "Future Launch", "rrp_price") or "launch" in col_lower or "date" in col_lower:
                 continue
             col_clean = _clean_string(col)
-            if mp_key_clean in col_clean and country_clean in col_clean:
+            if any(_clean_string(a) in col_clean for a in aliases) and country_clean in col_clean:
                 target_col = col
                 break
         # Second try: platform name only
@@ -1116,7 +1118,7 @@ def load_zecom(file, country="PH"):
                 if col in ("Article No", "Launch Date", "Future Launch", "rrp_price") or "launch" in col_lower or "date" in col_lower:
                     continue
                 col_clean = _clean_string(col)
-                if mp_key_clean in col_clean:
+                if any(_clean_string(a) in col_clean for a in aliases):
                     target_col = col
                     break
         if target_col:
