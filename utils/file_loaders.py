@@ -854,36 +854,53 @@ def load_content(file):
         return pd.DataFrame()
     df = _normalise_cols(df)
     
-    # Map SKU / EAN
+    # 1. Map SKU / EAN
     ean_col = next((c for c in df.columns if c.lower() in ["sku as ean", "ean", "sku", "sku_ean", "seller sku", "sellersku", "seller_sku"]), None)
     if ean_col:
         df = df.rename(columns={ean_col: "SKU"})
     elif "EAN" in df.columns and "SKU" not in df.columns:
         df = df.rename(columns={"EAN": "SKU"})
         
-    # Map Article Number (exact candidates first)
-    art_col = None
-    for c in ["Article No", "Color_No", "Color_No.1", "ArticleNo", "Article Number"]:
-        if c in df.columns:
-            art_col = c
-            break
-    if art_col is None:
-        for c in df.columns:
-            if "article" in c.lower() or "color" in c.lower():
-                art_col = c
-                break
-    if art_col and art_col != "Article No":
-        df = df.rename(columns={art_col: "Article No"})
-                
-    # Map Color Name
-    color_name_col = next((c for c in df.columns if c.lower() in ["color name", "colorname", "color_name", "colour name", "colour_name"]), None)
+    # 2. Map Color Name FIRST (prevents color name column from being mistakenly taken as Article No)
+    color_name_col = next((c for c in df.columns if any(k in c.lower() for k in ["color name", "colour name", "color_name", "colour_name", "shade"])), None)
+    if not color_name_col:
+        col_cand = next((c for c in df.columns if c.lower().strip() in ["color", "colour"]), None)
+        if col_cand:
+            sample_vals = [str(x).strip() for x in df[col_cand].dropna().head(10)]
+            if any(len(v) > 3 or not v.isdigit() for v in sample_vals):
+                color_name_col = col_cand
     if color_name_col:
         df = df.rename(columns={color_name_col: "content_color_name"})
         
-    # Map Gender
+    # 3. Map Gender
     gender_col = next((c for c in df.columns if c.lower() in ["gender", "genders", "sex"]), None)
     if gender_col:
         df = df.rename(columns={gender_col: "content_gender"})
+        
+    # 4. Map Article Number (robust detection supporting Style + Color composite)
+    exact_candidates = ["Article No", "Article Number", "ArticleNo", "Article_No", "Color_No.1", "Color_No", "Color No", "PIM Article#", "PIM Article", "Article", "Style Number", "Style#", "Style Code", "Model No", "Item No"]
+    art_col = next((c for c in exact_candidates if c in df.columns), None)
+    
+    style_col = next((c for c in df.columns if c.lower().strip() in ["style", "style#", "style_no", "style number", "style no"]), None)
+    color_code_col = next((c for c in df.columns if c.lower().strip() in ["color", "colour", "color_no", "color no", "color code", "col no", "color_code"] and c != "content_color_name"), None)
+    
+    if art_col:
+        sample_vals = [str(x).strip() for x in df[art_col].dropna().head(10)]
+        has_full_art = any("_" in v for v in sample_vals if v)
+        if not has_full_art and color_code_col and style_col:
+            df["Article No"] = df[style_col].astype(str).str.strip() + "_" + df[color_code_col].astype(str).str.strip().str.zfill(2)
+        else:
+            if art_col != "Article No":
+                df = df.rename(columns={art_col: "Article No"})
+    elif style_col and color_code_col:
+        df["Article No"] = df[style_col].astype(str).str.strip() + "_" + df[color_code_col].astype(str).str.strip().str.zfill(2)
+    elif style_col:
+        df = df.rename(columns={style_col: "Article No"})
+    else:
+        skip_kw = ["name", "gender", "size", "price", "sku", "ean", "image", "chart", "status", "date", "url", "description", "title"]
+        art_col = next((c for c in df.columns if c not in ["SKU", "content_color_name", "content_gender"] and any(k in c.lower() for k in ["article", "style", "pim"]) and not any(sk in c.lower() for sk in skip_kw)), None)
+        if art_col and art_col != "Article No":
+            df = df.rename(columns={art_col: "Article No"})
         
     # Auto-detect UK Size column
     uk_col = next((c for c in df.columns if "uk" in c.lower() and "size" in c.lower()), 
