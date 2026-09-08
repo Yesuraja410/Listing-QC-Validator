@@ -35,7 +35,8 @@ COLUMN_SYNONYMS = {
     ],
     "article_number": [
         "article number", "article no", "article", "article_number", "art no", 
-        "art_no", "style code", "style_code", "style number", "style_no"
+        "art_no", "style code", "style_code", "style number", "style_no",
+        "model", "model no", "model number", "model_no"
     ],
     "ecommerce_status": [
         "e-commerce status", "ecommerce status", "status", "ecom status", 
