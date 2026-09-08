@@ -487,10 +487,47 @@ def build_content_maps(content_df: pd.DataFrame) -> Tuple[Dict, Dict, Dict, Dict
     )
 
 
+def build_flexible_zecom_dict(raw_dict: Dict) -> Dict:
+    out = {}
+    if not raw_dict:
+        return out
+    for k, v in raw_dict.items():
+        norm = _normalise_article_no(k)
+        if norm:
+            out[norm] = v
+    for norm, v in list(out.items()):
+        if "_" in norm:
+            base = norm.split("_")[0]
+            if base not in out:
+                out[base] = v
+        no_zero = norm.lstrip("0")
+        if no_zero not in out:
+            out[no_zero] = v
+    return out
+
+
+def lookup_zecom(d: Dict, art: str, default: str = "") -> str:
+    if not d or not art:
+        return default
+    norm = _normalise_article_no(art)
+    if norm in d:
+        return d[norm]
+    if "_" in norm:
+        base = norm.split("_")[0]
+        if base in d:
+            return d[base]
+    no_zero = norm.lstrip("0")
+    if no_zero in d:
+        return d[no_zero]
+    for k, v in d.items():
+        if k == norm or (k and norm and (k.startswith(norm + "_") or norm.startswith(k + "_"))):
+            return v
+    return default
+
+
 def build_zecom_maps(zecom_df: pd.DataFrame, channel: str) -> Tuple[Dict, Dict, Dict]:
     """
-    Builds lookup tables from zEcom File.
-    Optimised using vectorised pandas operations for speed.
+    Builds lookup tables from zEcom File with multi-key flexible matching.
     """
     article_to_launchdate = {}
     article_to_ecomstatus = {}
@@ -570,13 +607,16 @@ def build_zecom_maps(zecom_df: pd.DataFrame, channel: str) -> Tuple[Dict, Dict, 
             if launch_date_col and launch_date_col in df_clean.columns:
                 dates = pd.to_datetime(df_clean[launch_date_col], errors="coerce")
                 formatted_dates = dates.dt.date.astype(str).replace("NaT", "")
-                article_to_launchdate = dict(zip(df_clean["Art_clean"], formatted_dates))
+                raw_ld = dict(zip(df_clean["Art_clean"], formatted_dates))
+                article_to_launchdate = build_flexible_zecom_dict(raw_ld)
                 
             if ecom_col in df_clean.columns:
-                article_to_ecomstatus = dict(zip(df_clean["Art_clean"], df_clean[ecom_col].apply(_safe_str)))
+                raw_ec = dict(zip(df_clean["Art_clean"], df_clean[ecom_col].apply(_safe_str)))
+                article_to_ecomstatus = build_flexible_zecom_dict(raw_ec)
                 
             if "rrp_price" in df_clean.columns:
-                article_to_rrpprice = dict(zip(df_clean["Art_clean"], df_clean["rrp_price"].apply(_safe_str)))
+                raw_rrp = dict(zip(df_clean["Art_clean"], df_clean["rrp_price"].apply(_safe_str)))
+                article_to_rrpprice = build_flexible_zecom_dict(raw_rrp)
                 
     return article_to_launchdate, article_to_ecomstatus, article_to_rrpprice
 
@@ -646,7 +686,7 @@ def validate_row_internal(
         # 3. E-commerce Status zEcom Check
         ref_ecom_status = "Not Found"
         if article_to_ecomstatus is not None and norm_art:
-            ref_ecom_status = article_to_ecomstatus.get(norm_art, "Not Found")
+            ref_ecom_status = lookup_zecom(article_to_ecomstatus, norm_art, default="Not Found")
         
         if ref_ecom_status == "Not Found":
             add_exc("Article Number", art_num, "Error", f"Article No '{art_num}' not found in zEcom File lookup.")
@@ -664,7 +704,7 @@ def validate_row_internal(
         ref_ld_str = ""
         ref_ld = None
         if article_to_launchdate is not None and norm_art:
-            ref_ld_str = article_to_launchdate.get(norm_art, "")
+            ref_ld_str = lookup_zecom(article_to_launchdate, norm_art, default="")
             if ref_ld_str:
                 try:
                     ref_ld = pd.to_datetime(ref_ld_str).date()
@@ -771,7 +811,7 @@ def validate_row_internal(
                     add_exc("Price", price_raw, "Error", "Price must be greater than zero.")
                 
                 # Compare against zEcom RRP Price
-                ref_rrp = article_to_rrpprice.get(norm_art, "") if norm_art else ""
+                ref_rrp = lookup_zecom(article_to_rrpprice, norm_art, default="") if norm_art else ""
                 if ref_rrp:
                     try:
                         ref_p_f = float(re.sub(r'[^\d\.]', '', str(ref_rrp)))
@@ -1101,7 +1141,7 @@ def validate_dataframe(
         article_to_launchdate, _, _ = zecom_maps
         if article_to_launchdate:
             missing_launch_mask = df["launch_date"].fillna("").astype(str).str.strip() == ""
-            resolved_launches = df.loc[missing_launch_mask, "_norm_art"].map(article_to_launchdate)
+            resolved_launches = df.loc[missing_launch_mask, "_norm_art"].apply(lambda a: lookup_zecom(article_to_launchdate, a))
             df.loc[missing_launch_mask, "launch_date"] = resolved_launches.fillna("")
 
     # Resolve missing Gender using SKU from content_maps
@@ -1175,7 +1215,7 @@ def validate_dataframe(
         if zecom_maps and norm_art:
             article_to_launchdate, article_to_ecomstatus, article_to_rrpprice = zecom_maps
             if article_to_ecomstatus:
-                ref_ecom_status = article_to_ecomstatus.get(norm_art, "Not Found")
+                ref_ecom_status = lookup_zecom(article_to_ecomstatus, norm_art, default="Not Found")
         zecom_status_col.append(ref_ecom_status)
         
         # Filter row exceptions for checks
@@ -1250,8 +1290,8 @@ def validate_dataframe(
                         
         if zecom_maps and norm_art:
             _, _, article_to_rrpprice = zecom_maps
-            if article_to_rrpprice and norm_art in article_to_rrpprice:
-                ref_rrp_val = article_to_rrpprice[norm_art]
+            if article_to_rrpprice:
+                ref_rrp_val = lookup_zecom(article_to_rrpprice, norm_art, default="")
                     
         ref_color_name_col.append(ref_color_val)
         ref_size_col.append(ref_size_val)
