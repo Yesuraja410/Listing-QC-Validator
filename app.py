@@ -39,7 +39,7 @@ from utils.report_generator import (
 
 # Caching helper functions to avoid reloading large datasets repeatedly
 @st.cache_data(max_entries=2)
-def cached_load_content(file_bytes, file_name, article_col_override=None):
+def cached_load_content(file_bytes, file_name, article_col_override=None, sku_col_letter=None, article_col_letter=None):
     from utils.file_loaders import load_content
     class BytesFile:
         def __init__(self, b, n):
@@ -49,7 +49,12 @@ def cached_load_content(file_bytes, file_name, article_col_override=None):
             return self.bytes
         def seek(self, pos):
             pass
-    return load_content(BytesFile(file_bytes, file_name), article_col_override=article_col_override)
+    return load_content(
+        BytesFile(file_bytes, file_name),
+        article_col_override=article_col_override,
+        sku_col_letter=sku_col_letter,
+        article_col_letter=article_col_letter
+    )
 
 @st.cache_data(max_entries=2)
 def cached_load_zecom(file_bytes, file_name, country, channel=None, status_col_letter=None, launch_col_letter=None):
@@ -185,14 +190,21 @@ with st.sidebar:
 
     with st.expander("⚙️ Manual Content File Article No Override (optional)"):
         st.caption(
-            "If the Article No column isn't auto-detected (rare, but possible with "
-            "unusual headers), type its exact header name here. Leave blank to auto-detect."
+            "If SKU or Article No aren't auto-detected correctly, point directly at the "
+            "Excel column letter (as shown in the spreadsheet, e.g. A, B, C...). "
+            "Leave blank to auto-detect as before."
         )
-        content_article_col_override = st.text_input(
-            "Article No Column Header (exact name)",
+        content_sku_col_letter = st.text_input(
+            "SKU / EAN Column (e.g. B)",
             value="",
-            placeholder="e.g. Material Number",
-            key="content_article_override"
+            placeholder="B",
+            key="content_sku_letter"
+        ).strip() or None
+        content_article_col_letter = st.text_input(
+            "Article No Column (e.g. A)",
+            value="",
+            placeholder="A",
+            key="content_article_letter"
         ).strip() or None
     
     # 2. zEcom File (Mandatory)
@@ -483,7 +495,11 @@ if target_loaded:
         if st.button("🚀 Run QC Validation", type="primary", use_container_width=True):
             with st.spinner("Loading references and running validations..."):
                 try:
-                    content_df = cached_load_content(content_file.getvalue(), content_file.name, article_col_override=content_article_col_override)
+                    content_df = cached_load_content(
+                        content_file.getvalue(), content_file.name,
+                        sku_col_letter=content_sku_col_letter,
+                        article_col_letter=content_article_col_letter
+                    )
                     zecom_df = cached_load_zecom(
                         zecom_file.getvalue(), zecom_file.name, country,
                         channel=channel,
