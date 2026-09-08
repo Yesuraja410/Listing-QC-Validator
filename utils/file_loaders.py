@@ -200,7 +200,39 @@ def parse_google_sheets_url(url: str) -> str:
 
 # ── General File Reader ───────────────────────────────────────────────────────
 
-def _read_file(file, header_row=0, skiprows=None, usecols_keywords=None):
+def _peek_raw_headers(file, header_row=0, skiprows=None) -> list:
+    """
+    Cheaply reads just the header row (nrows=0) to get the FULL original
+    column list, in original left-to-right order - before any keyword-based
+    column pruning happens in _read_file. This is what lets Excel-letter
+    column overrides (e.g. "SKU is in column B") resolve against the correct
+    original position, not the pruned one.
+    """
+    if file is None:
+        return []
+    if isinstance(file, str):
+        filename = file
+        with open(file, 'rb') as f:
+            raw = f.read()
+    else:
+        filename = getattr(file, "name", "unknown.csv")
+        raw = file.read()
+        file.seek(0)
+    name = filename.lower()
+    try:
+        if name.endswith(".csv"):
+            df_headers = pd.read_csv(io.BytesIO(raw), header=header_row, skiprows=skiprows, nrows=0)
+        else:
+            try:
+                import python_calamine
+                df_headers = pd.read_excel(io.BytesIO(raw), header=header_row, skiprows=skiprows, nrows=0, engine="calamine")
+            except ImportError:
+                df_headers = pd.read_excel(io.BytesIO(raw), header=header_row, skiprows=skiprows, nrows=0)
+        return list(df_headers.columns)
+    except Exception:
+        return []
+
+def _read_file(file, header_row=0, skiprows=None, usecols_keywords=None, force_include_cols=None):
     if file is None:
         return pd.DataFrame()
     
@@ -227,6 +259,10 @@ def _read_file(file, header_row=0, skiprows=None, usecols_keywords=None):
                     except ImportError:
                         df_headers = pd.read_excel(io.BytesIO(raw), header=header_row, skiprows=skiprows, nrows=0)
                 usecols = [h for h in df_headers.columns if any(k in str(h).lower() for k in usecols_keywords)]
+                if force_include_cols:
+                    for fc in force_include_cols:
+                        if fc in df_headers.columns and fc not in usecols:
+                            usecols.append(fc)
                 if not usecols:
                     usecols = None
             except Exception:
@@ -847,7 +883,7 @@ def load_tiktok(active_file, inactive_file):
     combined = combined.drop_duplicates(subset=["SKU"], keep="first")
     return combined.reset_index(drop=True)
 
-def load_content(file, article_col_override=None):
+def load_content(file, article_col_override=None, sku_col_letter=None, article_col_letter=None):
     if file is None:
         return pd.DataFrame()
         
@@ -865,15 +901,46 @@ def load_content(file, article_col_override=None):
     
     if not isinstance(file, str):
         file.seek(0)
-        
-    df = _read_file(file, header_row=h_row, usecols_keywords=["sku", "ean", "barcode", "upc", "article", "color", "colour", "style", "gender", "sex", "uk", "us", "rus", "size", "image", "chart", "no", "number", "code", "model", "item", "pim", "material"])
+
+    # Resolve any Excel-letter column overrides against the ORIGINAL header
+    # order (before keyword-based pruning below drops unrelated columns).
+    sku_letter_col_name = None
+    article_letter_col_name = None
+    if sku_col_letter or article_col_letter:
+        if not isinstance(file, str):
+            file.seek(0)
+        raw_headers = _peek_raw_headers(file, header_row=h_row)
+        if not isinstance(file, str):
+            file.seek(0)
+        sku_idx = excel_col_to_index(sku_col_letter)
+        art_idx = excel_col_to_index(article_col_letter)
+        if 0 <= sku_idx < len(raw_headers):
+            sku_letter_col_name = raw_headers[sku_idx]
+        if 0 <= art_idx < len(raw_headers):
+            article_letter_col_name = raw_headers[art_idx]
+
+    force_include = [c for c in (sku_letter_col_name, article_letter_col_name) if c]
+    df = _read_file(
+        file, header_row=h_row,
+        usecols_keywords=["sku", "ean", "barcode", "upc", "article", "color", "colour", "style", "gender", "sex", "uk", "us", "rus", "size", "image", "chart", "no", "number", "code", "model", "item", "pim", "material"],
+        force_include_cols=force_include if force_include else None
+    )
     if df.empty:
         return pd.DataFrame()
     df = _normalise_cols(df)
+
+    # Apply Excel-letter overrides right away, before any auto-detection runs,
+    # so they take unconditional priority.
+    if sku_letter_col_name and sku_letter_col_name in df.columns:
+        df = df.rename(columns={sku_letter_col_name: "SKU"})
+    if article_letter_col_name and article_letter_col_name in df.columns:
+        if article_letter_col_name != "Article No":
+            df = df.rename(columns={article_letter_col_name: "Article No"})
+        article_col_override = "Article No"
     
     # 1. Map SKU / EAN
     ean_col = next((c for c in df.columns if c.lower() in ["sku as ean", "ean", "sku", "sku_ean", "seller sku", "sellersku", "seller_sku"]), None)
-    if ean_col:
+    if ean_col and "SKU" not in df.columns:
         df = df.rename(columns={ean_col: "SKU"})
     elif "EAN" in df.columns and "SKU" not in df.columns:
         df = df.rename(columns={"EAN": "SKU"})
