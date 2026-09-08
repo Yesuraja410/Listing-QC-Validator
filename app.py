@@ -541,7 +541,7 @@ if target_loaded:
                             st.error("Could not parse any valid listing data from the uploaded live files. Please verify the headers and formats.")
                             st.stop()
                         
-                        from utils.validators import build_content_maps, build_zecom_maps, _clean_sku, is_empty, lookup_zecom
+                        from utils.validators import build_content_maps, build_zecom_maps, _clean_sku, is_empty, lookup_zecom, clean_str
                         from utils.file_loaders import _normalise_article_no
                         
                         content_maps = build_content_maps(content_df)
@@ -581,11 +581,11 @@ if target_loaded:
                         # Build a new dataframe for Post QC validation
                         post_qc_records = []
                         for idx, row in combined_df.iterrows():
-                            raw_sku = str(row.get("sku", "")).strip()
+                            raw_sku = clean_str(row.get("sku", ""))
                             clean_s = _clean_sku(raw_sku)
-                            prod_id_val = str(row.get("product_id", "")).strip()
-                            target_color = str(row.get("color_name", "")).strip().lower()
-                            target_size = str(row.get("size", "")).strip().lower()
+                            prod_id_val = clean_str(row.get("product_id", ""))
+                            target_color = clean_str(row.get("color_name", "")).lower()
+                            target_size = clean_str(row.get("size", "")).lower()
                             
                             if not clean_s and not prod_id_val:
                                 continue
@@ -615,15 +615,15 @@ if target_loaded:
                                     live_row = live_pid_dict.get(prod_id_val, {})
 
                             # 2. Fetch Article No from row, Content File, live_row or direct matching
-                            ref_art = str(row.get("article_number", "")).strip()
+                            ref_art = clean_str(row.get("article_number", ""))
                             if not ref_art and clean_s:
                                 ref_art = sku_to_article.get(clean_s, "")
                             if not ref_art:
-                                ref_art = str(row.get("parent_sku", "")).strip()
+                                ref_art = clean_str(row.get("parent_sku", ""))
                             if not ref_art and live_row:
-                                ref_art = str(live_row.get("parent_sku", "")).strip()
+                                ref_art = clean_str(live_row.get("parent_sku", ""))
                             if not ref_art and live_row:
-                                ref_art = str(live_row.get("article_number", "")).strip()
+                                ref_art = clean_str(live_row.get("article_number", ""))
                             if not ref_art and live_row:
                                 l_sku = _clean_sku(live_row.get("sku", ""))
                                 if l_sku:
@@ -635,10 +635,10 @@ if target_loaded:
                                     
                             # 3. Fetch market place Launch date from Zecom File using flexible lookup
                             norm_art = _normalise_article_no(ref_art)
-                            ref_ld = lookup_zecom(article_to_launchdate, norm_art, default=str(row.get("launch_date", "")).strip())
+                            ref_ld = lookup_zecom(article_to_launchdate, norm_art, default=clean_str(row.get("launch_date", "")))
                             
                             # 4. Standardize gender: from content file gender
-                            gender_val = str(row.get("gender", "")).strip()
+                            gender_val = clean_str(row.get("gender", ""))
                             if not gender_val and clean_s:
                                 gender_val = sku_to_gender.get(clean_s, "")
                             if not gender_val and live_row:
@@ -650,34 +650,34 @@ if target_loaded:
                                 ecommerce_status = live_row.get("ecommerce_status", "Active")
                                 if is_empty(ecommerce_status):
                                     ecommerce_status = "Active"
-                                product_name = live_row.get("product_name", "") or str(row.get("product_name", "")).strip()
-                                color_name = live_row.get("color_name", "") or str(row.get("color_name", "")).strip()
-                                size = live_row.get("size", "") or str(row.get("size", "")).strip()
+                                product_name = live_row.get("product_name", "") or clean_str(row.get("product_name", ""))
+                                color_name = live_row.get("color_name", "") or clean_str(row.get("color_name", ""))
+                                size = live_row.get("size", "") or clean_str(row.get("size", ""))
                                 price = live_row.get("price", "0.0")
-                                if is_empty(price) or str(price).strip() == "0.0":
-                                    price = str(row.get("price", "0.0")).strip()
+                                if is_empty(price) or clean_str(price) == "0.0":
+                                    price = clean_str(row.get("price", "0.0"))
                                 quantity = live_row.get("quantity", "0")
                                 if is_empty(quantity):
-                                    quantity = str(row.get("quantity", "0")).strip()
-                                images = live_row.get("images", "") or str(row.get("images", "")).strip()
-                                size_chart = live_row.get("size_chart", "") or str(row.get("size_chart", "")).strip()
+                                    quantity = clean_str(row.get("quantity", "0"))
+                                images = live_row.get("images", "") or clean_str(row.get("images", ""))
+                                size_chart = live_row.get("size_chart", "") or clean_str(row.get("size_chart", ""))
                                 source_file = live_row.get("_source_file", "Live Report")
                                 row_num = live_row.get("_original_row_number", idx + 2)
                             else:
                                 ecommerce_status = "Missing in Live"
-                                product_name = str(row.get("product_name", "")).strip()
-                                color_name = str(row.get("color_name", "")).strip()
-                                size = str(row.get("size", "")).strip()
-                                price = str(row.get("price", "0.0")).strip()
-                                quantity = str(row.get("quantity", "0")).strip()
-                                images = str(row.get("images", "")).strip()
-                                size_chart = str(row.get("size_chart", "")).strip()
+                                product_name = clean_str(row.get("product_name", ""))
+                                color_name = clean_str(row.get("color_name", ""))
+                                size = clean_str(row.get("size", ""))
+                                price = clean_str(row.get("price", "0.0"))
+                                quantity = clean_str(row.get("quantity", "0"))
+                                images = clean_str(row.get("images", ""))
+                                size_chart = clean_str(row.get("size_chart", ""))
                                 source_file = row.get("_source_file", "Upload Sheet")
                                 row_num = row.get("_original_row_number", idx + 2)
                                 
                             post_qc_records.append({
                                 "sku": clean_s,
-                                "product_id": prod_id_val if prod_id_val and prod_id_val not in ["nan", "None"] else (str(live_row.get("product_id", "")).strip() if live_row else ""),
+                                "product_id": prod_id_val if prod_id_val and prod_id_val not in ["nan", "None"] else clean_str(live_row.get("product_id", "")) if live_row else "",
                                 "article_number": ref_art,
                                 "launch_date": ref_ld,
                                 "ecommerce_status": ecommerce_status,
