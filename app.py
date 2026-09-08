@@ -39,7 +39,7 @@ from utils.report_generator import (
 
 # Caching helper functions to avoid reloading large datasets repeatedly
 @st.cache_data(max_entries=2)
-def cached_load_content(file_bytes, file_name):
+def cached_load_content(file_bytes, file_name, article_col_override=None):
     from utils.file_loaders import load_content
     class BytesFile:
         def __init__(self, b, n):
@@ -49,10 +49,10 @@ def cached_load_content(file_bytes, file_name):
             return self.bytes
         def seek(self, pos):
             pass
-    return load_content(BytesFile(file_bytes, file_name))
+    return load_content(BytesFile(file_bytes, file_name), article_col_override=article_col_override)
 
 @st.cache_data(max_entries=2)
-def cached_load_zecom(file_bytes, file_name, country):
+def cached_load_zecom(file_bytes, file_name, country, channel=None, status_col_letter=None, launch_col_letter=None):
     from utils.file_loaders import load_zecom
     class BytesFile:
         def __init__(self, b, n):
@@ -62,7 +62,10 @@ def cached_load_zecom(file_bytes, file_name, country):
             return self.bytes
         def seek(self, pos):
             pass
-    return load_zecom(BytesFile(file_bytes, file_name), country)
+    return load_zecom(
+        BytesFile(file_bytes, file_name), country,
+        channel=channel, status_col_letter=status_col_letter, launch_col_letter=launch_col_letter
+    )
 
 @st.cache_data(max_entries=2)
 def cached_process_live_files(live_files_data, channel):
@@ -179,6 +182,18 @@ with st.sidebar:
         type=["xlsx", "xls", "csv"],
         key="ref_content"
     )
+
+    with st.expander("⚙️ Manual Content File Article No Override (optional)"):
+        st.caption(
+            "If the Article No column isn't auto-detected (rare, but possible with "
+            "unusual headers), type its exact header name here. Leave blank to auto-detect."
+        )
+        content_article_col_override = st.text_input(
+            "Article No Column Header (exact name)",
+            value="",
+            placeholder="e.g. Material Number",
+            key="content_article_override"
+        ).strip() or None
     
     # 2. zEcom File (Mandatory)
     zecom_file = st.file_uploader(
@@ -186,6 +201,26 @@ with st.sidebar:
         type=["xlsx", "xls", "csv"],
         key="ref_zecom"
     )
+
+    with st.expander("⚙️ Manual zEcom Column Override (optional)"):
+        st.caption(
+            "Tracker headers keep shifting? Point directly at the Excel column "
+            "letter instead of relying on auto-detection. Leave blank to auto-detect as before."
+        )
+        zecom_status_col_letter = st.text_input(
+            "Ecom Status Column (e.g. Y)",
+            value="",
+            placeholder="Y",
+            key="zecom_status_letter",
+            help=f"Column holding the Active/Inactive status for the currently selected channel ({channel})."
+        ).strip()
+        zecom_launch_col_letter = st.text_input(
+            "Launch Date Column (e.g. AA)",
+            value="",
+            placeholder="AA",
+            key="zecom_launch_letter",
+            help="Column holding the Launch Date used for the future-launch check."
+        ).strip()
     
     # 3. Post QC Channel Marketplace Files
     live_files = []
@@ -288,6 +323,13 @@ with st.sidebar:
         custom_statuses = [s.strip().lower() for s in custom_statuses_str.split(",") if s.strip()]
         
         check_live_images = st.checkbox("Live HTTP Image Check", value=False)
+        fast_image_mode = st.checkbox(
+            "⚡ Fast Image Compare (primary image only)",
+            value=True,
+            help="Compares only the first/primary image per SKU instead of all Images1-8. "
+                 "Cuts image download volume by up to ~8x on Lazada-style sheets. "
+                 "Turn off for a full all-image audit (slower, more thorough)."
+        )
 
 # ── Main Content Area ────────────────────────────────────────────────────────
 # ── Setup Checklist Dashboard ────────────────────────────────────────────────
@@ -441,8 +483,29 @@ if target_loaded:
         if st.button("🚀 Run QC Validation", type="primary", use_container_width=True):
             with st.spinner("Loading references and running validations..."):
                 try:
-                    content_df = cached_load_content(content_file.getvalue(), content_file.name)
-                    zecom_df = cached_load_zecom(zecom_file.getvalue(), zecom_file.name, country)
+                    content_df = cached_load_content(content_file.getvalue(), content_file.name, article_col_override=content_article_col_override)
+                    zecom_df = cached_load_zecom(
+                        zecom_file.getvalue(), zecom_file.name, country,
+                        channel=channel,
+                        status_col_letter=zecom_status_col_letter or None,
+                        launch_col_letter=zecom_launch_col_letter or None
+                    )
+
+                    # Surface Article No detection status immediately - this is the
+                    # #1 cause of Post QC's zEcom Status/Launch Date checks silently
+                    # coming back blank/"Not Found" for every row.
+                    detected_art_col = getattr(content_df, "attrs", {}).get("detected_article_col")
+                    mapped_count = getattr(content_df, "attrs", {}).get("article_mapped_count", 0)
+                    if not detected_art_col or mapped_count == 0:
+                        st.warning(
+                            "⚠️ No **Article No** column could be detected in the Content File "
+                            "(or none of its values are populated). zEcom Status, Launch Date, and "
+                            "Article-based size checks will come back blank/'Not Found' for every row "
+                            "until this is fixed. Use the '⚙️ Manual Content File Article No Override' "
+                            "expander in the sidebar to point directly at the correct column."
+                        )
+                    else:
+                        st.caption(f"✅ Content File Article No column detected: **{detected_art_col}** ({mapped_count} rows mapped)")
                     
                     all_standardized = []
                     for fn, df in upload_dfs.items():
@@ -868,40 +931,55 @@ if target_loaded:
                     st.info("💡 Please upload Live marketplace files (Excel, CSV, or ZIP) in the sidebar to run the sync audit.")
                 else:
                     if st.button("🔄 Execute Comparison Audit", type="primary", key="btn_run_compare"):
-                        with st.spinner("Consolidating live reports and running comparison..."):
-                            try:
-                                consolidated_live = process_live_files(live_files, channel)
-                                if consolidated_live.empty:
-                                    st.error("Could not parse any valid listing data from the uploaded live files. Please verify the headers and formats.")
-                                else:
-                                    st.success(f"✅ Successfully loaded and consolidated {len(consolidated_live)} live listing variants.")
-                                    
-                                    standardized_source = val_df.copy()
-                                    
-                                    # Get reference files if available in session/variables
-                                    content_df_ref = None
-                                    zecom_df_ref = None
-                                    if content_file:
-                                        content_df_ref = content_df
-                                    if zecom_file:
-                                        zecom_df_ref = zecom_df
-                                        
-                                    comp_df, comp_metrics = compare_source_and_live(
-                                        standardized_source,
-                                        consolidated_live,
-                                        match_column="sku",
-                                        content_df=content_df_ref,
-                                        zecom_df=zecom_df_ref,
-                                        channel=channel
-                                    )
-                                    
-                                    st.session_state.comp_df = comp_df
-                                    st.session_state.comp_metrics = comp_metrics
-                                    st.session_state.ran_comparison = True
-                            except Exception as e:
-                                st.error(f"Comparison run failed: {e}")
-                                import traceback
-                                st.error(traceback.format_exc())
+                        try:
+                            with st.spinner("Consolidating live reports..."):
+                                # Use the cached parser (keyed on file bytes) instead of
+                                # re-parsing the raw uploads on every rerun - this alone
+                                # avoids redundant Excel/CSV parsing on large files.
+                                live_files_data = [(lf.getvalue(), lf.name) for lf in live_files]
+                                consolidated_live = cached_process_live_files(live_files_data, channel)
+
+                            if consolidated_live.empty:
+                                st.error("Could not parse any valid listing data from the uploaded live files. Please verify the headers and formats.")
+                            else:
+                                st.success(f"✅ Successfully loaded and consolidated {len(consolidated_live)} live listing variants.")
+                                
+                                standardized_source = val_df.copy()
+                                
+                                # Get reference files if available in session/variables
+                                content_df_ref = None
+                                zecom_df_ref = None
+                                if content_file:
+                                    content_df_ref = content_df
+                                if zecom_file:
+                                    zecom_df_ref = zecom_df
+
+                                progress_bar = st.progress(0.0, text="Downloading & hashing images for comparison...")
+
+                                def _update_progress(done, total):
+                                    if total:
+                                        pct = min(done / total, 1.0)
+                                        progress_bar.progress(pct, text=f"Downloading & hashing images... {done}/{total}")
+
+                                comp_df, comp_metrics = compare_source_and_live(
+                                    standardized_source,
+                                    consolidated_live,
+                                    match_column="sku",
+                                    content_df=content_df_ref,
+                                    zecom_df=zecom_df_ref,
+                                    channel=channel,
+                                    fast_mode=fast_image_mode,
+                                    progress_callback=_update_progress
+                                )
+                                progress_bar.empty()
+                                
+                                st.session_state.comp_df = comp_df
+                                st.session_state.comp_metrics = comp_metrics
+                                st.session_state.ran_comparison = True
+                        except Exception as e:
+                            st.error(f"Comparison run failed: {e}")
+                            import traceback
+                            st.error(traceback.format_exc())
                                 
                     if st.session_state.ran_comparison:
                         st.markdown("---")
