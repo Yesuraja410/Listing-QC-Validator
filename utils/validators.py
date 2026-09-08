@@ -1197,6 +1197,16 @@ def validate_dataframe(
     df["_norm_art"] = df["article_number"].fillna("").astype(str).str.strip().apply(_normalise_article_no)
     df["_corrected_size"] = df["size"].fillna("").astype(str).str.strip().apply(correct_size)
     df["_corrected_size_low"] = df["_corrected_size"].str.lower().str.strip()
+
+    # A column that arrives entirely blank/NaN (e.g. every row's launch_date is
+    # empty before zEcom resolution runs) gets inferred by pandas as float64.
+    # Later assigning resolved strings into it via .loc then raises
+    # LossySetitemError on newer pandas. Force these to object dtype upfront
+    # so string assignment always succeeds regardless of what the column
+    # happened to be inferred as.
+    for _col in ("article_number", "launch_date", "gender"):
+        if _col in df.columns:
+            df[_col] = df[_col].astype(object)
     
     # Resolve missing Article Number using SKU, parent_sku, or direct zecom lookups
     missing_art_mask = df["article_number"].fillna("").astype(str).str.strip() == ""
