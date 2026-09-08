@@ -881,7 +881,7 @@ def validate_row_internal(
                         size_type = "UK size"
                         valid_sizes_for_art = set()
                         
-                        if channel == "Lazada PH" and is_footwear(prod_name):
+                        if (channel == "Lazada PH" or str(size).lower().startswith("us")) and is_footwear(prod_name):
                             ref_size = sku_to_ussize.get(sku_val, "")
                             size_type = "US size"
                             valid_sizes_for_art = article_to_ussizes.get(norm_art, set())
@@ -895,7 +895,7 @@ def validate_row_internal(
                             valid_sizes_for_art = article_to_uksizes.get(norm_art, set())
                             
                         # Fallback to UK size if preferred type is not mapped/empty
-                        if not ref_size and (channel == "Lazada PH" or is_kids_apparel(gender_for_name_check, prod_name)):
+                        if not ref_size:
                             ref_size = sku_to_uksize.get(sku_val, "")
                             size_type = "UK size (Fallback)"
                             valid_sizes_for_art = article_to_uksizes.get(norm_art, set())
@@ -911,7 +911,7 @@ def validate_row_internal(
                     if norm_art and size:
                         valid_sizes = set()
                         size_type = "UK size"
-                        if channel == "Lazada PH" and is_footwear(prod_name):
+                        if (channel == "Lazada PH" or str(size).lower().startswith("us")) and is_footwear(prod_name):
                             valid_sizes = article_to_ussizes.get(norm_art, set())
                             size_type = "US size"
                         elif channel in ["Zalora SG", "Zalora MY", "Zalora PH"] and is_kids_apparel(gender_for_name_check, prod_name):
@@ -932,7 +932,7 @@ def validate_row_internal(
                 if norm_art and size:
                     valid_sizes = set()
                     size_type = "UK size"
-                    if channel == "Lazada PH" and is_footwear(prod_name):
+                    if (channel == "Lazada PH" or str(size).lower().startswith("us")) and is_footwear(prod_name):
                         valid_sizes = article_to_ussizes.get(norm_art, set())
                         size_type = "US size"
                     elif channel in ["Zalora SG", "Zalora MY", "Zalora PH"] and is_kids_apparel(gender_for_name_check, prod_name):
@@ -1104,6 +1104,11 @@ def validate_dataframe(
     ref_size_col = []
     ref_rrp_col = []
     
+    # ── Ensure all canonical columns exist in DataFrame ──
+    for c in ["sku", "product_id", "article_number", "launch_date", "gender", "product_name", "color_name", "size", "price", "quantity", "images", "size_chart"]:
+        if c not in df.columns:
+            df[c] = ""
+
     # ── Pre-calculate and clean columns vectorially ──
     df["_cleaned_sku"] = df["sku"].fillna("").astype(str).str.strip().apply(_clean_sku)
     df["_norm_art"] = df["article_number"].fillna("").astype(str).str.strip().apply(_normalise_article_no)
@@ -1111,8 +1116,6 @@ def validate_dataframe(
     df["_corrected_size_low"] = df["_corrected_size"].str.lower().str.strip()
     
     # Resolve missing Article Number using SKU, parent_sku, or direct zecom lookups
-    if "article_number" not in df.columns:
-        df["article_number"] = ""
     missing_art_mask = df["article_number"].fillna("").astype(str).str.strip() == ""
     
     if sku_to_article and missing_art_mask.any():
@@ -1265,7 +1268,7 @@ def validate_dataframe(
                 ref_color_val = sku_to_colorname[sku_val]
                 
             if sku_val in sku_to_article:
-                if channel == "Lazada PH" and is_footwear(row.get("product_name", "")):
+                if (channel == "Lazada PH" or str(row.get("size", "")).lower().startswith("us")) and is_footwear(row.get("product_name", "")):
                     ref_size_val = sku_to_ussize.get(sku_val, "")
                 elif channel in ["Zalora SG", "Zalora MY", "Zalora PH"] and is_kids_apparel(row.get("gender", ""), row.get("product_name", "")):
                     ref_size_val = sku_to_russize.get(sku_val, "")
@@ -1277,7 +1280,7 @@ def validate_dataframe(
             else:
                 if norm_art:
                     valid_sizes = set()
-                    if channel == "Lazada PH" and is_footwear(row.get("product_name", "")):
+                    if (channel == "Lazada PH" or str(row.get("size", "")).lower().startswith("us")) and is_footwear(row.get("product_name", "")):
                         valid_sizes = article_to_ussizes.get(norm_art, set())
                     elif channel in ["Zalora SG", "Zalora MY", "Zalora PH"] and is_kids_apparel(row.get("gender", ""), row.get("product_name", "")):
                         valid_sizes = article_to_russizes.get(norm_art, set())
