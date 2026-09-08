@@ -462,7 +462,7 @@ if target_loaded:
                             st.error("Could not parse any valid listing data from the uploaded live files. Please verify the headers and formats.")
                             st.stop()
                         
-                        from utils.validators import build_content_maps, build_zecom_maps, _clean_sku, is_empty
+                        from utils.validators import build_content_maps, build_zecom_maps, _clean_sku, is_empty, lookup_zecom
                         from utils.file_loaders import _normalise_article_no
                         
                         content_maps = build_content_maps(content_df)
@@ -473,6 +473,7 @@ if target_loaded:
                         
                         article_to_launchdate = zecom_maps[0] if zecom_maps else {}
                         article_to_ecomstatus = zecom_maps[1] if zecom_maps else {}
+                        article_to_rrpprice = zecom_maps[2] if zecom_maps else {}
                         
                         is_shopee_or_tiktok = channel and any(p in channel.lower() for p in ["shopee", "tiktok"])
                         
@@ -512,30 +513,7 @@ if target_loaded:
                             if not clean_s:
                                 clean_s = prod_id_val
                                 
-                            # 1. Fetch Article No from row, Content File, live_row or direct matching
-                            ref_art = str(row.get("article_number", "")).strip()
-                            if not ref_art:
-                                ref_art = sku_to_article.get(clean_s, "")
-                            if not ref_art:
-                                ref_art = str(row.get("parent_sku", "")).strip()
-                            if not ref_art and live_row:
-                                ref_art = str(live_row.get("parent_sku", "")).strip()
-                            if not ref_art and live_row:
-                                ref_art = str(live_row.get("article_number", "")).strip()
-                            if not ref_art and live_row:
-                                l_sku = _clean_sku(live_row.get("sku", ""))
-                                if l_sku:
-                                    ref_art = sku_to_article.get(l_sku, "")
-                            if not ref_art:
-                                norm_s = _normalise_article_no(clean_s)
-                                if norm_s in article_to_launchdate or norm_s in article_to_ecomstatus:
-                                    ref_art = norm_s
-                                    
-                            # 2. Fetch market place ecom status and Launch date from Zecom File
-                            norm_art = _normalise_article_no(ref_art)
-                            ref_ld = article_to_launchdate.get(norm_art, "")
-                            
-                            # 3. Fetch all other fields from Post QC Live Reports (by matching Product ID / Color or clean SKU)
+                            # 1. Fetch all fields from Post QC Live Reports (by matching Product ID / Color or clean SKU) FIRST
                             live_row = {}
                             if is_shopee_or_tiktok and prod_id_val and prod_id_val not in ["nan", "None", ""]:
                                 if target_color:
@@ -556,21 +534,31 @@ if target_loaded:
                                     live_row = live_sku_dict.get(clean_s, {})
                                 if not live_row and prod_id_val:
                                     live_row = live_pid_dict.get(prod_id_val, {})
-                                    
-                            # If ref_art was empty, re-check using live_row data
+
+                            # 2. Fetch Article No from row, Content File, live_row or direct matching
+                            ref_art = str(row.get("article_number", "")).strip()
+                            if not ref_art and clean_s:
+                                ref_art = sku_to_article.get(clean_s, "")
+                            if not ref_art:
+                                ref_art = str(row.get("parent_sku", "")).strip()
                             if not ref_art and live_row:
                                 ref_art = str(live_row.get("parent_sku", "")).strip()
-                                if not ref_art:
-                                    ref_art = str(live_row.get("article_number", "")).strip()
-                                if not ref_art:
-                                    l_sku = _clean_sku(live_row.get("sku", ""))
-                                    if l_sku:
-                                        ref_art = sku_to_article.get(l_sku, "")
-                                if ref_art:
-                                    norm_art = _normalise_article_no(ref_art)
-                                    ref_ld = article_to_launchdate.get(norm_art, "")
+                            if not ref_art and live_row:
+                                ref_art = str(live_row.get("article_number", "")).strip()
+                            if not ref_art and live_row:
+                                l_sku = _clean_sku(live_row.get("sku", ""))
+                                if l_sku:
+                                    ref_art = sku_to_article.get(l_sku, "")
+                            if not ref_art and clean_s:
+                                norm_s = _normalise_article_no(clean_s)
+                                if norm_s in article_to_launchdate or norm_s in article_to_ecomstatus:
+                                    ref_art = norm_s
+                                    
+                            # 3. Fetch market place Launch date from Zecom File using flexible lookup
+                            norm_art = _normalise_article_no(ref_art)
+                            ref_ld = lookup_zecom(article_to_launchdate, norm_art, default=str(row.get("launch_date", "")).strip())
                             
-                            # Standardize gender: from content file gender
+                            # 4. Standardize gender: from content file gender
                             gender_val = str(row.get("gender", "")).strip()
                             if not gender_val and clean_s:
                                 gender_val = sku_to_gender.get(clean_s, "")
