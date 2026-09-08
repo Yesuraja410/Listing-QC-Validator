@@ -1187,7 +1187,11 @@ def load_zecom(file, country="PH", channel=None, status_col_letter=None, launch_
         return re.sub(r'[^a-z0-9]', '', str(s).lower())
 
     for mp_key, aliases in mp_keywords.items():
-        ecom_name = f"Ecom_{mp_key.capitalize()}"
+        # NOTE: "tiktok".capitalize() produces "Tiktok" (only the first letter
+        # capitalised), not "TikTok" - that mismatch used to make every
+        # downstream "Ecom_TikTok" lookup silently miss and fall back to
+        # Zalora's status. Special-case it so the column name is exact.
+        ecom_name = "Ecom_TikTok" if mp_key == "tiktok" else f"Ecom_{mp_key.capitalize()}"
         target_col = None
         country_clean = _clean_string(country)
         
