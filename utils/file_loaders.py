@@ -1066,7 +1066,7 @@ def load_content(file, article_col_override=None, sku_col_letter=None, article_c
     return df
 
 # ── zEcom Loader (extracts launch dates, ecom statuses, and RRP Price)
-def load_zecom(file, country="PH", channel=None, status_col_letter=None, launch_col_letter=None):
+def load_zecom(file, country="PH", channel=None, status_col_letter=None, launch_col_letter=None, sheet_name_override=None):
     if file is None:
         return pd.DataFrame()
     raw = file.read()
@@ -1081,6 +1081,7 @@ def load_zecom(file, country="PH", channel=None, status_col_letter=None, launch_
     preferred_article_cols = article_col_by_country.get(country, ["Article No"])
     preferred_rows = [2, 1, 0, 3] if country == "PH" else [3, 2, 1, 0]
 
+    target_sheet = None
     try:
         if name.endswith(".csv"):
             raw_df = pd.read_csv(io.BytesIO(raw), header=None, dtype=str)
@@ -1093,6 +1094,19 @@ def load_zecom(file, country="PH", channel=None, status_col_letter=None, launch_
             
             sheet_names = xl.sheet_names
             target_sheet = sheet_names[0]
+
+            # A manually-picked sheet name always wins outright - skip all
+            # the country-keyword guessing below entirely. Match case-
+            # insensitively since typing it exactly as shown in the tab is
+            # easy to get slightly wrong on case.
+            manual_sheet_matched = False
+            if sheet_name_override:
+                override_norm = str(sheet_name_override).strip().lower()
+                for s_name in sheet_names:
+                    if s_name.strip().lower() == override_norm:
+                        target_sheet = s_name
+                        manual_sheet_matched = True
+                        break
             
             country_lower = country.lower().strip()
             country_keywords = {
@@ -1102,36 +1116,37 @@ def load_zecom(file, country="PH", channel=None, status_col_letter=None, launch_
             }
             keywords = country_keywords.get(country_lower, [country_lower])
             
-            # 1. Try exact match first (case-insensitive)
             matched_sheet = None
-            for s_name in sheet_names:
-                s_name_lower = s_name.lower().strip()
-                if s_name_lower in keywords:
-                    matched_sheet = s_name
-                    break
-            
-            # 2. Try word boundary match (e.g. "SG tracker" or "Lazada SG")
-            if not matched_sheet:
+            if not manual_sheet_matched:
+                # 1. Try exact match first (case-insensitive)
                 for s_name in sheet_names:
                     s_name_lower = s_name.lower().strip()
-                    cleaned_s_name = re.sub(r'[^a-z0-9]', ' ', s_name_lower)
-                    for kw in keywords:
-                        if re.search(r'\b' + re.escape(kw) + r'\b', cleaned_s_name):
-                            matched_sheet = s_name
-                            break
-                    if matched_sheet:
-                        break
-            
-            # 3. Try substring match as fallback
-            if not matched_sheet:
-                for s_name in sheet_names:
-                    s_name_lower = s_name.lower().strip()
-                    if any(kw in s_name_lower for kw in keywords):
+                    if s_name_lower in keywords:
                         matched_sheet = s_name
                         break
-            
-            if matched_sheet:
-                target_sheet = matched_sheet
+                
+                # 2. Try word boundary match (e.g. "SG tracker" or "Lazada SG")
+                if not matched_sheet:
+                    for s_name in sheet_names:
+                        s_name_lower = s_name.lower().strip()
+                        cleaned_s_name = re.sub(r'[^a-z0-9]', ' ', s_name_lower)
+                        for kw in keywords:
+                            if re.search(r'\b' + re.escape(kw) + r'\b', cleaned_s_name):
+                                matched_sheet = s_name
+                                break
+                        if matched_sheet:
+                            break
+                
+                # 3. Try substring match as fallback
+                if not matched_sheet:
+                    for s_name in sheet_names:
+                        s_name_lower = s_name.lower().strip()
+                        if any(kw in s_name_lower for kw in keywords):
+                            matched_sheet = s_name
+                            break
+                
+                if matched_sheet:
+                    target_sheet = matched_sheet
                 
             raw_df = xl.parse(target_sheet, header=None, dtype=str)
     except Exception:
@@ -1301,6 +1316,9 @@ def load_zecom(file, country="PH", channel=None, status_col_letter=None, launch_
         )
         df.attrs["manual_status_override"] = True
         df.attrs["manual_status_platform"] = ecom_name
+
+    df.attrs["detected_sheet"] = target_sheet
+    df.attrs["manual_sheet_override"] = bool(sheet_name_override) and target_sheet is not None and str(sheet_name_override).strip().lower() == str(target_sheet).strip().lower()
             
     return df
 
@@ -2094,9 +2112,23 @@ def process_live_files(uploaded_files, channel: str) -> pd.DataFrame:
         combined_cleaned.loc[combined_cleaned[col].isin(["", "nan", "None", "NaN", "<NA>"]), col] = np.nan
         
     if platform == "tiktok" and "product_id" in combined_cleaned.columns:
+        # Group by SKU ONLY (not by product_id too). TikTok's Product ID often
+        # lives in a separate Sales_information file while Images/Size Chart
+        # come from the Active/Inactive files - both keyed by SKU. Grouping by
+        # (product_id, sku) together fragments these into separate rows
+        # whenever one file's product_id is blank/fallback and the other has
+        # the real value, since that changes the group key. Grouping by SKU
+        # alone lets .first() pick the first non-blank product_id AND the
+        # first non-blank images/size_chart from whichever file has them,
+        # merged into a single row per SKU - the same approach already used
+        # for Lazada/Zalora below.
         combined_cleaned["product_id"] = combined_cleaned["product_id"].astype(str).str.strip()
-        combined_cleaned.loc[combined_cleaned["product_id"].isin(["", "nan", "None", "NaN", "<NA>"]), "product_id"] = combined_cleaned["sku"]
-        consolidated = combined_cleaned.groupby(["product_id", "sku"], as_index=False).first()
+        combined_cleaned.loc[combined_cleaned["product_id"].isin(["", "nan", "None", "NaN", "<NA>"]), "product_id"] = np.nan
+        consolidated = combined_cleaned.groupby("sku", as_index=False).first()
+        # Only now, after merging, fall back to SKU as product_id if truly
+        # never supplied by any uploaded file for that SKU.
+        if "product_id" in consolidated.columns:
+            consolidated["product_id"] = consolidated["product_id"].fillna(consolidated["sku"])
     else:
         consolidated = combined_cleaned.groupby("sku", as_index=False).first()
         
