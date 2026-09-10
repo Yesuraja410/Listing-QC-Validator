@@ -57,7 +57,7 @@ def cached_load_content(file_bytes, file_name, article_col_override=None, sku_co
     )
 
 @st.cache_data(max_entries=2)
-def cached_load_zecom(file_bytes, file_name, country, channel=None, status_col_letter=None, launch_col_letter=None):
+def cached_load_zecom(file_bytes, file_name, country, channel=None, status_col_letter=None, launch_col_letter=None, sheet_name_override=None):
     from utils.file_loaders import load_zecom
     class BytesFile:
         def __init__(self, b, n):
@@ -69,7 +69,8 @@ def cached_load_zecom(file_bytes, file_name, country, channel=None, status_col_l
             pass
     return load_zecom(
         BytesFile(file_bytes, file_name), country,
-        channel=channel, status_col_letter=status_col_letter, launch_col_letter=launch_col_letter
+        channel=channel, status_col_letter=status_col_letter, launch_col_letter=launch_col_letter,
+        sheet_name_override=sheet_name_override
     )
 
 @st.cache_data(max_entries=2)
@@ -216,9 +217,17 @@ with st.sidebar:
 
     with st.expander("⚙️ Manual zEcom Column Override (optional)"):
         st.caption(
-            "Tracker headers keep shifting? Point directly at the Excel column "
-            "letter instead of relying on auto-detection. Leave blank to auto-detect as before."
+            "Tracker headers keep shifting, or your file has multiple country sheets "
+            "(e.g. SG and MY in one workbook)? Point directly at the exact sheet and/or "
+            "column letter instead of relying on auto-detection. Leave blank to auto-detect as before."
         )
+        zecom_sheet_override = st.text_input(
+            "Sheet Name (e.g. SG, MY)",
+            value="",
+            placeholder="SG",
+            key="zecom_sheet_override",
+            help="Exact tab name to read from, when the tracker has multiple sheets (e.g. one per country) that aren't being auto-matched correctly."
+        ).strip() or None
         zecom_status_col_letter = st.text_input(
             "Ecom Status Column (e.g. Y)",
             value="",
@@ -504,8 +513,13 @@ if target_loaded:
                         zecom_file.getvalue(), zecom_file.name, country,
                         channel=channel,
                         status_col_letter=zecom_status_col_letter or None,
-                        launch_col_letter=zecom_launch_col_letter or None
+                        launch_col_letter=zecom_launch_col_letter or None,
+                        sheet_name_override=zecom_sheet_override
                     )
+                    detected_sheet = getattr(zecom_df, "attrs", {}).get("detected_sheet")
+                    if detected_sheet:
+                        override_tag = " (manual override)" if getattr(zecom_df, "attrs", {}).get("manual_sheet_override") else " (auto-detected)"
+                        st.caption(f"✅ zEcom Tracker sheet used: **{detected_sheet}**{override_tag}")
 
                     # Surface Article No detection status immediately - this is the
                     # #1 cause of Post QC's zEcom Status/Launch Date checks silently
