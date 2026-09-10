@@ -1451,10 +1451,30 @@ def _clean_live_df_skipping(df: pd.DataFrame, sku_col: str, platform: str) -> pd
         return df
     if sku_col not in df.columns:
         return df
-    first_val = _safe_str(df.iloc[0][sku_col])
-    if not first_val or any(k in first_val.lower() for k in ["mandatory", "example", "instruction", "select"]):
-        if len(df) > 3:
-            return df.iloc[3:].reset_index(drop=True)
+    # Some export templates (notably TikTok Seller Center) stack MULTIPLE
+    # instruction/metadata rows directly under the header before real data
+    # starts (e.g. a "Mandatory"/"Optional" row, then an "Uneditable"/
+    # long-description row). A fixed skip-count is fragile - walk forward
+    # row by row and only skip rows that actually look like instruction
+    # markers, stopping as soon as a real data row is seen.
+    junk_markers = ["mandatory", "optional", "example", "instruction", "select", "uneditable", "conditional mandatory"]
+    skip_rows = 0
+    max_check = min(5, len(df))
+    for i in range(max_check):
+        val = _safe_str(df.iloc[i][sku_col]).lower().strip()
+        # Instruction/description rows are either blank, an exact status
+        # marker, or a long descriptive sentence (real SKUs are short codes).
+        looks_like_junk = (
+            not val
+            or any(val == m or val.startswith(m) for m in junk_markers)
+            or len(val) > 60
+        )
+        if looks_like_junk:
+            skip_rows = i + 1
+        else:
+            break
+    if skip_rows > 0 and skip_rows < len(df):
+        return df.iloc[skip_rows:].reset_index(drop=True)
     return df
 
 def _split_images_and_sizechart(imgs: List[str], explicit_sc: str = "") -> Tuple[List[str], str]:
@@ -1734,11 +1754,55 @@ def parse_live_tiktok(df: pd.DataFrame) -> pd.DataFrame:
     df_data = _normalise_cols(df.copy())
     
     sku_col = next((c for c in df_data.columns if c.lower() in ["seller sku", "sku", "sellersku"]), None)
-    if sku_col:
-        df_data = _clean_live_df_skipping(df_data, sku_col, "tiktok")
-        
     prod_col = next((c for c in df_data.columns if c.lower().replace(" ", "").replace("_", "") in ["productid", "itemid", "spuid"]), None)
     name_col = next((c for c in df_data.columns if c.lower() in ["product name", "name", "product_name"]), None)
+
+    # TikTok Seller Center exports Media Information and Sales Information as
+    # TWO SEPARATE files, unlike Lazada/Shopee/Zalora where one file has
+    # everything. Media Information is product-level only - one row per
+    # Product ID with all its images/size chart, and it carries NO SKU column
+    # at all. Sales Information is the opposite: one row per SKU variant with
+    # its own Product ID, price and stock, but no images. Detect which file
+    # this is so the two can be merged correctly downstream by Product ID.
+    img_cols_check = [c for c in df_data.columns if any(k in c.lower() for k in ["main image", "image"]) and "chart" not in c.lower()]
+    is_media_file = bool(img_cols_check) and not sku_col
+
+    if sku_col:
+        df_data = _clean_live_df_skipping(df_data, sku_col, "tiktok")
+    elif prod_col:
+        df_data = _clean_live_df_skipping(df_data, prod_col, "tiktok")
+
+    if is_media_file:
+        sc_col = next((c for c in df_data.columns if "size chart" in c.lower()), None)
+        img_cols = [c for c in img_cols_check if c != sc_col]
+
+        records = []
+        for _, row in df_data.iterrows():
+            prod_val = _safe_str(row.get(prod_col)) if prod_col else ""
+            if not prod_val or prod_val.lower().strip() in ["product id", "mandatory", "uneditable"]:
+                continue
+            name_val = _safe_str(row.get(name_col)) if name_col else ""
+            imgs_raw = [str(row[c]).strip() for c in img_cols if pd.notna(row.get(c)) and str(row[c]).strip() not in ("", "nan", "None")]
+            cell_sc = _safe_str(row.get(sc_col)) if sc_col else ""
+            explicit_sc = cell_sc if cell_sc.lower().strip() not in ("size chart", "sizechart") else ""
+            imgs, sc_val = _split_images_and_sizechart(imgs_raw, explicit_sc)
+            imgs_str = ",".join(imgs)
+            records.append({
+                "sku": "",
+                "product_id": prod_val,
+                "product_name": name_val,
+                "color_name": "",
+                "size": "",
+                "price": "0.0",
+                "quantity": "0",
+                "images": imgs_str,
+                "size_chart": sc_val,
+                "ecommerce_status": "Active",
+                "_is_media_row": True
+            })
+        return pd.DataFrame(records)
+
+    # Otherwise: Sales Information file (SKU-level variant data - no images)
     price_col = next((c for c in df_data.columns if c.lower() == "price"), None)
     if not price_col:
         price_col = next((c for c in df_data.columns if "retail price" in c.lower() or c.lower() == "price"), None)
@@ -1747,18 +1811,6 @@ def parse_live_tiktok(df: pd.DataFrame) -> pd.DataFrame:
     var_col = next((c for c in df_data.columns if c.lower() in ["variation option", "variation", "variation_option"]), None)
     color_col = next((c for c in df_data.columns if c.lower() in ["primary variation value (option)", "color", "colour"]), None)
     size_col = next((c for c in df_data.columns if c.lower() in ["secondary variation value (option)", "size"]), None)
-    
-    # Dynamic size chart column detection by cell content check
-    sc_col = next((c for c in df_data.columns if "size chart" in c.lower()), None)
-    if not sc_col:
-        for col in df_data.columns:
-            if df_data[col].astype(str).str.lower().str.strip().isin(["size chart", "sizechart"]).any():
-                sc_col = col
-                break
-                
-    img_cols = [c for c in df_data.columns if any(k in c.lower() for k in ["main image", "image"]) and not "chart" in c.lower()]
-    if sc_col and sc_col in img_cols:
-        img_cols.remove(sc_col)
     
     records = []
     for _, row in df_data.iterrows():
@@ -1783,15 +1835,6 @@ def parse_live_tiktok(df: pd.DataFrame) -> pd.DataFrame:
             color_val = _safe_str(row.get(color_col)) if color_col else ""
             size_val = _safe_str(row.get(size_col)) if size_col else ""
             
-        imgs_raw = [str(row[c]).strip() for c in img_cols if pd.notna(row.get(c)) and str(row[c]).strip() not in ("", "nan", "None")]
-        
-        # If sc_col cell contains "size chart" instruction string, treat the URL value as empty
-        cell_sc = _safe_str(row.get(sc_col)) if sc_col else ""
-        explicit_sc = cell_sc if cell_sc.lower().strip() not in ("size chart", "sizechart") else ""
-        
-        imgs, sc_val = _split_images_and_sizechart(imgs_raw, explicit_sc)
-        imgs_str = ",".join(imgs)
-        
         records.append({
             "sku": sku_val,
             "product_id": prod_val,
@@ -1800,9 +1843,10 @@ def parse_live_tiktok(df: pd.DataFrame) -> pd.DataFrame:
             "size": size_val,
             "price": price_val,
             "quantity": qty_val,
-            "images": imgs_str,
-            "size_chart": sc_val,
-            "ecommerce_status": "Active"
+            "images": "",
+            "size_chart": "",
+            "ecommerce_status": "Active",
+            "_is_media_row": False
         })
     return pd.DataFrame(records)
 
@@ -1962,17 +2006,40 @@ def detect_header_row(data: bytes, is_csv: bool) -> int:
         return True
 
     best_row_idx = 0
+    max_score = -1
     max_matches = -1
-    
+
+    def is_human_readable_header(val):
+        # Distinguishes a display header ("Seller SKU", "Product ID") from a
+        # machine/API field-name row ("seller_sku", "product_id") that some
+        # export templates (e.g. TikTok Seller Center) place a row or two
+        # above the real header. Both rows often score identically on raw
+        # keyword matches, so this tiebreaker prefers the human-facing one -
+        # which is what every downstream column-name check (e.g. "seller sku"
+        # with a space) actually expects.
+        s = str(val).strip()
+        if not s:
+            return False
+        if " " in s:
+            return True
+        if s[0].isupper() and "_" not in s:
+            return True
+        return False
+
     for idx, row in enumerate(rows):
         matches = 0
+        human_bonus = 0
         for val in row:
             if not is_header_val_likely(val):
                 continue
             val_str = str(val).lower()
             if any(k in val_str for k in keywords):
                 matches += 1
-        if matches > max_matches:
+                if is_human_readable_header(val):
+                    human_bonus += 1
+        score = matches + human_bonus * 0.5
+        if score > max_score:
+            max_score = score
             max_matches = matches
             best_row_idx = idx
             
@@ -2102,7 +2169,55 @@ def process_live_files(uploaded_files, channel: str) -> pd.DataFrame:
             
         consolidated = consolidated.drop(columns=["_is_media_row"], errors="ignore").fillna("")
         return consolidated
-        
+
+    if platform == "tiktok":
+        combined["product_id"] = combined["product_id"].astype(str).str.strip()
+        combined["sku"] = combined["sku"].astype(str).str.strip()
+
+        is_media_mask = combined.get("_is_media_row", pd.Series([False]*len(combined))) == True
+        media_df = combined[is_media_mask]
+        sales_df = combined[~is_media_mask]
+
+        if not media_df.empty:
+            # TikTok's Media Information file is product-level only (one row
+            # per Product ID, no SKU/color breakdown) - unlike Shopee, there's
+            # no per-color image mapping to build, just a flat product_id ->
+            # {images, size_chart} lookup.
+            media_map = {}
+            for _, r in media_df.iterrows():
+                pid = str(r["product_id"]).strip()
+                if not pid or pid in ["nan", "None", ""]:
+                    continue
+                imgs = str(r.get("images", "")).strip()
+                sc = str(r.get("size_chart", "")).strip()
+                if pid not in media_map:
+                    media_map[pid] = {"images": "", "size_chart": ""}
+                if imgs and imgs not in ["nan", "None"] and not media_map[pid]["images"]:
+                    media_map[pid]["images"] = imgs
+                if sc and sc not in ["nan", "None"] and not media_map[pid]["size_chart"]:
+                    media_map[pid]["size_chart"] = sc
+
+            if not sales_df.empty:
+                sales_df = sales_df.copy().astype(object)
+                for idx, r in sales_df.iterrows():
+                    pid = str(r["product_id"]).strip()
+                    if pid in media_map:
+                        m_info = media_map[pid]
+                        cur_img = str(r.get("images", "")).strip()
+                        if not cur_img or cur_img in ["nan", "None"]:
+                            sales_df.at[idx, "images"] = m_info["images"]
+                        cur_sc = str(r.get("size_chart", "")).strip()
+                        if not cur_sc or cur_sc in ["nan", "None"]:
+                            sales_df.at[idx, "size_chart"] = m_info["size_chart"]
+                consolidated = sales_df.groupby("sku", as_index=False).first()
+            else:
+                consolidated = media_df.groupby("product_id", as_index=False).first()
+        else:
+            consolidated = sales_df.groupby("sku", as_index=False).first() if not sales_df.empty else combined
+
+        consolidated = consolidated.drop(columns=["_is_media_row"], errors="ignore").fillna("")
+        return consolidated
+
     # Merge rows by SKU by selecting first non-empty value for each column vectorially
     combined_cleaned = combined.copy()
     for col in combined_cleaned.columns:
@@ -2111,26 +2226,6 @@ def process_live_files(uploaded_files, channel: str) -> pd.DataFrame:
         combined_cleaned[col] = combined_cleaned[col].astype(str).str.strip()
         combined_cleaned.loc[combined_cleaned[col].isin(["", "nan", "None", "NaN", "<NA>"]), col] = np.nan
         
-    if platform == "tiktok" and "product_id" in combined_cleaned.columns:
-        # Group by SKU ONLY (not by product_id too). TikTok's Product ID often
-        # lives in a separate Sales_information file while Images/Size Chart
-        # come from the Active/Inactive files - both keyed by SKU. Grouping by
-        # (product_id, sku) together fragments these into separate rows
-        # whenever one file's product_id is blank/fallback and the other has
-        # the real value, since that changes the group key. Grouping by SKU
-        # alone lets .first() pick the first non-blank product_id AND the
-        # first non-blank images/size_chart from whichever file has them,
-        # merged into a single row per SKU - the same approach already used
-        # for Lazada/Zalora below.
-        combined_cleaned["product_id"] = combined_cleaned["product_id"].astype(str).str.strip()
-        combined_cleaned.loc[combined_cleaned["product_id"].isin(["", "nan", "None", "NaN", "<NA>"]), "product_id"] = np.nan
-        consolidated = combined_cleaned.groupby("sku", as_index=False).first()
-        # Only now, after merging, fall back to SKU as product_id if truly
-        # never supplied by any uploaded file for that SKU.
-        if "product_id" in consolidated.columns:
-            consolidated["product_id"] = consolidated["product_id"].fillna(consolidated["sku"])
-    else:
-        consolidated = combined_cleaned.groupby("sku", as_index=False).first()
-        
+    consolidated = combined_cleaned.groupby("sku", as_index=False).first()
     consolidated = consolidated.fillna("")
     return consolidated
