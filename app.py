@@ -352,6 +352,29 @@ with st.sidebar:
                  "Turn off for a full all-image audit (slower, more thorough)."
         )
 
+    with st.expander("🤖 AI Visual Verification (optional)"):
+        st.caption(
+            "Checks whether the product image actually *shows* the stated Color Name "
+            "and whether the Size Chart is the right type for the product's category "
+            "(e.g. an adult shoe chart wrongly used on a Youth product). This is a "
+            "different check from the image-matching above - it looks at what the "
+            "image actually depicts, using Google Gemini's vision model. "
+            "Runs on a sample (one row per unique Product Name + Color Name) to keep "
+            "cost and time reasonable - not every SKU."
+        )
+        st.markdown(
+            "Get a free key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey) "
+            "using the same Google account as AI Studio."
+        )
+        enable_ai_visual_check = st.checkbox("Enable AI Visual Verification", value=False)
+        gemini_api_key = st.text_input(
+            "Gemini API Key",
+            value="",
+            type="password",
+            key="gemini_api_key_input",
+            disabled=not enable_ai_visual_check
+        ).strip() or None
+
 # ── Main Content Area ────────────────────────────────────────────────────────
 # ── Setup Checklist Dashboard ────────────────────────────────────────────────
 content_loaded = content_file is not None
@@ -736,6 +759,30 @@ if target_loaded:
                         is_live_report=(qc_stage == "Post QC")
                     )
                     
+                    if qc_stage == "Post QC" and enable_ai_visual_check:
+                        if not gemini_api_key:
+                            st.warning("⚠️ AI Visual Verification is enabled but no Gemini API key was entered - skipping this check.")
+                        else:
+                            from utils.ai_visual_check import run_ai_visual_checks
+                            ai_progress = st.progress(0.0, text="Running AI visual verification on sampled rows...")
+
+                            def _ai_progress_cb(done, total):
+                                if total:
+                                    ai_progress.progress(min(done / total, 1.0), text=f"AI visual verification... {done}/{total}")
+
+                            val_df = run_ai_visual_checks(
+                                val_df,
+                                api_key=gemini_api_key,
+                                progress_callback=_ai_progress_cb
+                            )
+                            ai_progress.empty()
+                            n_mismatch = int((val_df["AI Visual Check"] == "Mismatch Found").sum())
+                            n_checked = int(val_df["AI Visual Check"].isin(["OK", "Mismatch Found"]).sum())
+                            if n_mismatch:
+                                st.warning(f"🤖 AI Visual Verification: **{n_mismatch}** mismatch(es) found out of {n_checked} sampled row(s) checked.")
+                            else:
+                                st.caption(f"🤖 AI Visual Verification: no mismatches found across {n_checked} sampled row(s).")
+
                     st.session_state.val_df = val_df
                     st.session_state.exc_df = exc_df
                     st.session_state.logs = logs
