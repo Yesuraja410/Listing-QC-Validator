@@ -673,8 +673,19 @@ if target_loaded:
                                 quantity = live_row.get("quantity", "0")
                                 if is_empty(quantity):
                                     quantity = clean_str(row.get("quantity", "0"))
-                                images = live_row.get("images", "") or clean_str(row.get("images", ""))
-                                size_chart = live_row.get("size_chart", "") or clean_str(row.get("size_chart", ""))
+                                # IMPORTANT: do NOT fall back to the source sheet's own
+                                # images/size_chart here. A real live_row match means we
+                                # genuinely know what the live listing has - if the live
+                                # listing's images or size chart are blank (e.g. someone
+                                # removed the size chart from the marketplace listing),
+                                # that blank must be preserved so the check below can
+                                # correctly flag it as missing. Silently borrowing the
+                                # source's own URL here would make every removed image/
+                                # size-chart look "present and valid" purely because the
+                                # SOURCE sheet still lists it - masking exactly the kind
+                                # of live-vs-target mismatch Post QC exists to catch.
+                                images = live_row.get("images", "")
+                                size_chart = live_row.get("size_chart", "")
                                 source_file = live_row.get("_source_file", "Live Report")
                                 row_num = live_row.get("_original_row_number", idx + 2)
                             else:
