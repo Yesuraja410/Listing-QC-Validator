@@ -42,6 +42,13 @@ def generate_qc_excel_report(val_df: pd.DataFrame, exc_df: pd.DataFrame, qc_stag
         "Images Check": "Images Check",
         "Size Chart Check": "Size Chart Check"
     }
+
+    # AI Visual Verification columns are optional (only present when that
+    # check was enabled for this run) - only include them in the export when
+    # they actually exist, so reports from runs without it stay unchanged.
+    if "AI Visual Check" in clean_val_df.columns:
+        target_headers["AI Visual Check"] = "AI Visual Check"
+        target_headers["AI Visual Check Notes"] = "AI Visual Check Notes"
     
     for col in target_headers.keys():
         if col not in clean_val_df.columns:
