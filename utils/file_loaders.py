@@ -1053,15 +1053,35 @@ def load_content(file, article_col_override=None, sku_col_letter=None, article_c
     # instead of silently breaking every downstream zEcom/Article lookup. ──
     if not hasattr(df, "attrs"):
         df.attrs = {}
-    df.attrs["detected_sku_col"] = "SKU" if "SKU" in df.columns else None
-    df.attrs["detected_article_col"] = _art_source_desc if "Article No" in df.columns else None
+    detected_sku_col = "SKU" if "SKU" in df.columns else None
+    detected_article_col = _art_source_desc if "Article No" in df.columns else None
     if "Article No" in df.columns:
         non_blank_arts = df["Article No"].apply(_safe_str)
-        df.attrs["article_mapped_count"] = int((non_blank_arts != "").sum())
-        df.attrs["article_sample"] = [v for v in non_blank_arts.head(3).tolist() if v]
+        article_mapped_count = int((non_blank_arts != "").sum())
+        article_sample = [v for v in non_blank_arts.head(3).tolist() if v]
     else:
-        df.attrs["article_mapped_count"] = 0
-        df.attrs["article_sample"] = []
+        article_mapped_count = 0
+        article_sample = []
+
+    # ── Trim to only the columns actually used downstream ──
+    # Content files frequently carry dozens of large free-text columns
+    # (Long/Short Description, Material variants, etc.) that get pulled in
+    # by the necessarily-broad read-time keyword filter above (e.g. a column
+    # named "Long Description (English (UK))" matches the "uk" keyword
+    # intended for "UK Size" columns). Keeping all of that in memory for
+    # every row - potentially 100+ MB for large trackers - is pure waste
+    # once the real fields we need have been identified and renamed. This
+    # is what was pushing Streamlit Cloud's free-tier memory limit and
+    # causing the app to be killed outright (the "Oh no" page with no
+    # traceback - an OOM kill happens at the OS level, before Python ever
+    # gets a chance to log a normal exception).
+    _keep_cols = [c for c in ["SKU", "Article No", "content_gender", "content_color_name", "uk_size", "us_size", "rus_size", "Size Chart"] if c in df.columns]
+    df = df[_keep_cols].copy()
+
+    df.attrs["detected_sku_col"] = detected_sku_col
+    df.attrs["detected_article_col"] = detected_article_col
+    df.attrs["article_mapped_count"] = article_mapped_count
+    df.attrs["article_sample"] = article_sample
 
     return df
 
